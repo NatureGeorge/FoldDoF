@@ -1,2 +1,4 @@
 build/
 __pycache__/
+folddof.egg-info/
+notebooks/dev*.ipynb
