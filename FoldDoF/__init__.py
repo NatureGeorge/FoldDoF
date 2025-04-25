@@ -16,7 +16,7 @@
 # @Filename: __init__.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-04-24 10:55:35 am
+# @Last Modified: 2025-04-25 05:24:56 pm
 import torch
 import numpy as np
 from typing import Union, Optional, Literal
@@ -25,17 +25,34 @@ from .frame import PeptideUnitFrame
 from .utils import mat_cumops
 
 
+class to_rottrans_mode(Enum):
+    PeptideUnitFrame = 'peptide_frame "Ca-C-N" global_rots:L+1 global_trans:L+1'
+    ResidueFrame = 'residue_frame "N-Ca-C" global_rots:L global_trans:L'
+
+
+def to_rottrans(bb_coords: torch.Tensor, bb_masks: Optional[torch.Tensor] = None, mode: Literal[to_rottrans_mode.PeptideUnitFrame, to_rottrans_mode.ResidueFrame] = to_rottrans_mode.PeptideUnitFrame):
+    '''
+    shape: L x 4 x ...
+    '''
+    if mode == to_rottrans_mode.PeptideUnitFrame:
+        return PeptideUnitFrame.to_rottrans(bb_coords, bb_masks)
+    elif mode == to_rottrans_mode.ResidueFrame:
+        raise NotImplementedError('TODO.')
+
+
 class to_bb_mode(Enum):
-    Pep_GlobalRots_GlobalTrans = 'peptide_frame global_rots:L+1 trans:L+1'
+    Pep_GlobalRots_GlobalTrans = 'peptide_frame global_rots:L+1 global_trans:L+1'
     Pep_GlobalRots_IsoRots = 'peptide_frame global_rots:L+1 loc_ca_ia1_wrt_n_ia1:L'
     Pep_RelativeRots_IsoRots = 'peptide_frame relative_rots:L loc_ca_ia1_wrt_n_ia1:L'
-    Res_GlobalRots_GlobalTrans = 'residue_frame global_rots:L trans:L'
+    Res_GlobalRots_GlobalTrans = 'residue_frame global_rots:L global_trans:L'
 
 
 def to_backbone(rots: torch.Tensor,
                 trans_or_loc_ca_ia1_wrt_n_ia1: torch.Tensor,
                 mode: Literal[to_bb_mode.Pep_GlobalRots_GlobalTrans, to_bb_mode.Pep_GlobalRots_IsoRots, to_bb_mode.Pep_RelativeRots_IsoRots],
-                aatype: Optional[Union[torch.Tensor, np.ndarray]] = None):
+                aatype: Optional[Union[torch.Tensor, np.ndarray]] = None,
+                with_cb: bool = False,
+                ):
     '''
     input shape: B x L x ...
     output shape: B x L x 4 x 3
@@ -65,5 +82,17 @@ def to_backbone(rots: torch.Tensor,
 
     else:
         raise NotImplementedError(f'Only support {to_bb_mode.__members__}')
+    
+    """
+    if with_cb:
+        # TODO: make it allow batch processing
+        # TODO: simplify the code when it comes to to_bb_mode.Res_GlobalRots_GlobalTrans
+        i = 0
+        n_ca_c_frameone = SidechainFrame.from_W_3(*bb_coords[i, :, :3].transpose(0,1))
+        n_ca_c_frameone_s_loc_cb = torch.tensor([CB_LOC.get(aa, CB_LOC['ALA']) for aa in aatype[i]], device=bb_coords.device, dtype=bb_coords.dtype).reshape(-1, 3)
+        n_ca_c_frameone_s_W_cb = n_ca_c_frameone.to_W_pos_i(n_ca_c_frameone_s_loc_cb, ...)
+        n_ca_c_frameone_s_W_cb = n_ca_c_frameone_s_W_cb[None]
+        bb_coords = torch.cat((bb_coords, n_ca_c_frameone_s_W_cb[:, :, None]), dim=2)
+    """
     
     return bb_coords # shape: B x L x 4 x 3

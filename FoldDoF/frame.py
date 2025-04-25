@@ -16,7 +16,7 @@
 # @Filename: frame.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-04-23 09:13:40 pm
+# @Last Modified: 2025-04-25 05:23:34 pm
 from typing import Union, List, Optional
 import math
 import torch
@@ -438,6 +438,34 @@ class PeptideUnitFrame(FrameClass):
             reconstruct_ori[idx_range] = reconstruct_ori[idx_range] + delta
             complete_progress += 2**remain_part
         return reconstruct_ori
+
+    @classmethod
+    def to_rottrans(cls, bb_coords: torch.Tensor, bb_masks: Optional[torch.Tensor] = None):
+        pep_frame = cls.from_W_n_ca_c(*bb_coords[:3])
+        nter_psi, cter_phi, cter_psi = pep_frame.get_ter_dihedral(*bb_coords[:4])
+        nter_frame_q = pep_frame.relative_quat_from_phi_psi(torch.pi, nter_psi)
+        cter_frame_q = pep_frame.relative_quat_from_phi_psi(cter_phi, cter_psi)
+        nter_frame_q = roma.quat_product(pep_frame.frame_q[0], roma.quat_conjugation(nter_frame_q))[None]
+        cter_frame_q = roma.quat_product(pep_frame.frame_q[-1], cter_frame_q)[None]
+        ter_loc_ca_ia1_wrt_n_ia1= (torch.tensor(DEF_LOC['ca_ia1_is_trans']) - torch.tensor(DEF_LOC['n_ia1']))[None]
+        global_rots_q = torch.cat((nter_frame_q, pep_frame.frame_q, cter_frame_q))
+        virtual_Cm1 = bb_coords[1, 0] - roma.unitquat_to_rotmat(nter_frame_q) @ torch.tensor(DEF_LOC['ca_ia1_is_trans'])
+        global_trans = torch.cat((virtual_Cm1, bb_coords[2]))
+        loc_ca_ia1 = pep_frame.to_local_pos(bb_coords[1, 1:])
+        loc_n_ia1 = pep_frame.to_local_pos(bb_coords[0, 1:])
+        loc_ca_ia1_wrt_n_ia1 = loc_ca_ia1 - loc_n_ia1
+        ret_loc_ca_ia1_wrt_n_ia1 = torch.cat((ter_loc_ca_ia1_wrt_n_ia1, loc_ca_ia1_wrt_n_ia1))
+        if bb_masks is not None:
+            n_ter_mask = bb_masks[0, [0, 1]].all() & bb_masks[1, 0] & bb_masks[2, 0]
+            c_ter_mask = bb_masks[2, [-2, -1]].all() & bb_masks[0, -1] & bb_masks[1, -1] & bb_masks[3, -1]
+            pep_mask = bb_masks[0, 1:] & bb_masks[1, :-1] & bb_masks[2, :-1]
+            pep_mask = torch.cat([n_ter_mask[None], pep_mask, c_ter_mask[None]])
+            assert (pep_mask[:-1] & pep_mask[1:]).any()
+            loc_ca_ia1_wrt_n_ia1_mask = torch.cat([torch.tensor([True]), bb_masks[1, 1:] & bb_masks[0, 1:] & pep_mask[1:-1]])
+        else:
+            pep_mask = torch.ones((bb_coords.shape[0]+1, ), dtype=torch.bool, device=bb_coords.device)
+            loc_ca_ia1_wrt_n_ia1_mask = torch.ones((bb_coords.shape[0], ), dtype=torch.bool, device=bb_coords.device)
+        return roma.unitquat_to_rotmat(global_rots_q), global_trans, ret_loc_ca_ia1_wrt_n_ia1, pep_mask, loc_ca_ia1_wrt_n_ia1_mask
 
 
 class ResidueFrame(FrameClass):
