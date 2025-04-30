@@ -16,7 +16,7 @@
 # @Filename: frame.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-04-23 09:10:16 pm
+# @Last Modified: 2025-04-30 05:30:07 pm
 import torch
 import roma
 import math
@@ -211,6 +211,85 @@ def mat_cumops(input: torch.Tensor, dim: int, ops = lambda a, b : b @ a):
         index = torch.arange(i, L, device=v.device, dtype=torch.int64)
         v.index_copy_(dim, index, ops(v.index_select(dim, index), v.index_select(dim, index-i)))
     return v
+
+
+def unitquat_slerp_fast(q0, q1, steps, shortest_arc=True, align_batch=False):
+    r"""
+    Spherical linear interpolation between two unit quaternions.
+    This function requires less computations than :func:`roma.utils.unitquat_slerp`,
+    but is **unsuitable for extrapolation (i.e.** ``steps`` **must be within [0,1])**.
+
+    Args: 
+        q0, q1 (Ax4 tensor): batch of unit quaternions (A may contain multiple dimensions).
+        steps (tensor of shape B): interpolation steps within 0.0 and 1.0, 0.0 corresponding to q0 and 1.0 to q1 (B may contain multiple dimensions).
+        shortest_arc (boolean): if True, interpolation will be performed along the shortest arc on SO(3) from `q0` to `q1` or `-q1`.
+        align_batch (boolean): if True, assumes `steps` and `q0/q1` share batch dimensions (result shape: Bx4). if False, treats them as separate dimensions (result shape: BxAx4).
+    Returns: 
+        batch of interpolated quaternions (BxAx4 tensor if align_batch=False, else Bx4 tensor).
+    """
+    # Flatten batch dimensions of q0 and q1
+    q0, batch_shape = roma.internal.flatten_batch_dims(q0, end_dim=-2)
+    q1, batch_shape1 = roma.internal.flatten_batch_dims(q1, end_dim=-2)
+    assert batch_shape == batch_shape1, "q0 and q1 must have the same batch dimensions"
+    
+    # omega is the 'angle' between both quaternions
+    cos_omega = torch.sum(q0 * q1, dim=-1)
+    if shortest_arc:
+        # Flip some quaternions to perform shortest arc interpolation.
+        q1 = q1.clone()
+        q1[cos_omega < 0,:] *= -1
+        cos_omega = torch.abs(cos_omega)
+    # True when q0 and q1 are close.
+    nearby_quaternions = cos_omega > (1.0 - 1e-3)
+    
+    steps_shape = steps.shape
+
+    if align_batch:
+        # Ensure steps can broadcast to q0's batch dimension
+        steps = steps.reshape_as(cos_omega)  # Force shape [A] if steps is scalar
+        
+        # Reshape tensors for element-wise operations
+        cos_omega = cos_omega.unsqueeze(-1)  # [A, 1]
+        s = steps.unsqueeze(-1)              # [A, 1]
+        
+        # Compute interpolation coefficients
+        omega = torch.acos(cos_omega)
+        alpha = torch.sin((1 - s) * omega)
+        beta = torch.sin(s * omega)
+        
+        # Apply linear interpolation fallback
+        alpha = alpha.clone()
+        beta = beta.clone()
+        alpha[nearby_quaternions] = 1 - s[nearby_quaternions]
+        beta[nearby_quaternions] = s[nearby_quaternions]
+        
+        # Element-wise interpolation
+        q = alpha * q0 + beta * q1
+        
+    else:
+        # Reshape for broadcasting
+        cos_omega = cos_omega.reshape((1,) * steps.dim() + (-1, 1))  # [1, ..., A, 1]
+        s = steps.reshape(steps.shape + (1, 1))                      # [B, ..., 1, 1]
+        
+        # Compute interpolation coefficients
+        omega = torch.acos(cos_omega)
+        alpha = torch.sin((1 - s) * omega)
+        beta = torch.sin(s * omega)
+        
+        # Apply linear interpolation fallback
+        alpha = alpha.clone()
+        beta = beta.clone()
+        alpha[..., nearby_quaternions, :] = 1 - s
+        beta[..., nearby_quaternions, :] = s
+        
+        # Broadcast and interpolate
+        q0_bc = q0.reshape((1,) * steps.dim() + q0.shape)  # [1, ..., A, 4]
+        q1_bc = q1.reshape((1,) * steps.dim() + q1.shape)  # [1, ..., A, 4]
+        q = alpha * q0_bc + beta * q1_bc
+    
+    # Normalize and reshape
+    q = roma.quat_normalize(q)
+    return q.reshape(steps_shape + (4,)) if align_batch else q.reshape(steps.shape + batch_shape + (4,))
 
 
 def pdist_(X: torch.Tensor, squared: bool = False, eps_in_sqrt: float = 1e-8):
