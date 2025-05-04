@@ -16,7 +16,7 @@
 # @Filename: frame.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-05-04 04:26:56 pm
+# @Last Modified: 2025-05-04 06:49:10 pm
 import torch
 import roma
 import math
@@ -223,6 +223,15 @@ def mat_cumops(input: torch.Tensor, dim: int, ops = lambda a, b : b @ a):
         index = torch.arange(i, L, device=v.device, dtype=torch.int64)
         v.index_copy_(dim, index, ops(v.index_select(dim, index), v.index_select(dim, index-i)))
     return v
+
+
+def parallel_prefix_sum(deltas: torch.Tensor, dim: int):
+    L, v = deltas.shape[dim], deltas.clone()
+    for stride in torch.pow(2, torch.arange(math.log2(L)+1, device=v.device, dtype=torch.int64)):
+        index = torch.arange(stride, L, device=v.device)
+        if index.numel() == 0: continue
+        v.index_copy_(dim, index, (v.index_select(dim, index - stride) + v.index_select(dim, index)))
+    return torch.cat((torch.zeros_like(v.index_select(dim=dim, index=torch.tensor([0]))), v), dim=dim)
 
 
 def unitquat_slerp_fast(q0, q1, steps, shortest_arc=True, align_batch=False):
