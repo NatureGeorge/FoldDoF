@@ -16,7 +16,7 @@
 # @Filename: frame.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-05-04 06:49:10 pm
+# @Last Modified: 2025-05-11 08:19:54 pm
 import torch
 import roma
 import math
@@ -231,7 +231,7 @@ def parallel_prefix_sum(deltas: torch.Tensor, dim: int):
         index = torch.arange(stride, L, device=v.device)
         if index.numel() == 0: continue
         v.index_copy_(dim, index, (v.index_select(dim, index - stride) + v.index_select(dim, index)))
-    return torch.cat((torch.zeros_like(v.index_select(dim=dim, index=torch.tensor([0]))), v), dim=dim)
+    return torch.cat((torch.zeros_like(v.index_select(dim=dim, index=torch.tensor([0], device=v.device))), v), dim=dim)
 
 
 def unitquat_slerp_fast(q0, q1, steps, shortest_arc=True, align_batch=False):
@@ -512,4 +512,11 @@ def rbf(D: torch.Tensor, num_rbf: int = 16, dmax: float = 20., dmin: float = 0.)
     D_sigma = (dmax - dmin) / num_rbf
     D_expand = torch.unsqueeze(D, -1)
     return torch.exp(-((D_expand - D_mu) / D_sigma)**2)
+
+
+def clamp_tensor_norm(tensor, dim, vmin, vmax):
+    original_norm = torch.norm(tensor, dim=dim, keepdim=True)
+    clamped_norm = torch.clamp(original_norm, min=vmin, max=vmax)
+    clamped_norm = torch.clamp(clamped_norm, min=1e-5)
+    return tensor / original_norm * clamped_norm
 
