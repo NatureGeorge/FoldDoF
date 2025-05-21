@@ -16,7 +16,7 @@
 # @Filename: frame.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-05-11 08:27:56 pm
+# @Last Modified: 2025-05-12 11:40:37 am
 from typing import Union, List, Optional
 import math
 import torch
@@ -346,9 +346,8 @@ class PeptideUnitFrame(FrameClass):
         
         avg_loc_n_ia1 = torch.tensor(DEF_LOC['n_ia1'], **tensor_kwargs).expand(*to_expand_shape, -1)
         avg_loc_n_ia1_ = torch.narrow(avg_loc_n_ia1, dim=dim, start=0, length=avg_loc_n_ia1.shape[dim]-1)
-        if clamp_loc_ca_ia1_wrt_n_ia1_sigma is not None:
+        if (clamp_loc_ca_ia1_wrt_n_ia1_sigma is not None) and (clamp_loc_ca_ia1_wrt_n_ia1_sigma >= 0):
             sigma = clamp_loc_ca_ia1_wrt_n_ia1_sigma
-            assert sigma >= 0
             loc_ca_ia1_wrt_n_ia1 = clamp_tensor_norm(loc_ca_ia1_wrt_n_ia1, dim=-1, vmin=1.460641 - sigma * 0.012020383, vmax=1.460641 + sigma * 0.012020383) # μ ± σ (μ=1.460641, σ=0.012020383)
         loc_ca_ia1 = loc_ca_ia1_wrt_n_ia1 + avg_loc_n_ia1_
         
