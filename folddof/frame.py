@@ -16,8 +16,8 @@
 # @Filename: frame.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-05-26 05:34:04 pm
-from typing import Union, List, Optional, Sequence
+# @Last Modified: 2025-05-26 08:16:22 pm
+from typing import Union, List, Optional
 import math
 import torch
 import roma
@@ -298,7 +298,7 @@ class PeptideUnitFrame(FrameClass):
         return avg_loc_ca_ia1_wrt_n_ia1
     
     @classmethod
-    def sample_pep_iso(cls, batch_size: int, length: int, cis_pep_count_label: Sequence = CIS_PEP_COUNT_STAT_SCOPE['count'], cis_pep_count_prob: Sequence = CIS_PEP_COUNT_STAT_SCOPE['prob'], rng = np.random, device='cpu', dtype=torch.float, return_coords: bool = True):
+    def sample_pep_iso(cls, batch_size: int, length: int, cis_pep_count_label: np.ndarray = CIS_PEP_COUNT_STAT_SCOPE['count'], cis_pep_count_prob: np.ndarray = CIS_PEP_COUNT_STAT_SCOPE['prob'], rng = np.random, device='cpu', dtype=torch.float, return_coords: bool = True):
         '''
         TODO: make use of aatype
         '''
