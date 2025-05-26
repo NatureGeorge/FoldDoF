@@ -16,14 +16,14 @@
 # @Filename: frame.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-05-24 06:58:41 pm
-from typing import Union, List, Optional
+# @Last Modified: 2025-05-26 05:34:04 pm
+from typing import Union, List, Optional, Sequence
 import math
 import torch
 import roma
 import numpy as np
-from .utils import quat_apply, quat_cumprod_sequential, quat_cumprod, dihedral, rad_unwrap, parallel_prefix_sum, clamp_tensor_norm
-from .data import DEF_LOC, CB_LOC, SC_F_ANCHOR_LOC, AA_SIDECHAIN_ATOMS, SC_F_REMAIN_LOC, SC_F_LOC
+from .utils import quat_apply, quat_cumprod_sequential, quat_cumprod, dihedral, rad_unwrap, parallel_prefix_sum, clamp_tensor_norm, sample_cis_pep_loc
+from .data import DEF_LOC, CB_LOC, SC_F_ANCHOR_LOC, AA_SIDECHAIN_ATOMS, SC_F_REMAIN_LOC, SC_F_LOC, CIS_PEP_COUNT_STAT_SCOPE
 
 
 class FrameClass:
@@ -278,17 +278,46 @@ class PeptideUnitFrame(FrameClass):
         return dist2trans <= dist2cis
     
     @classmethod
-    def to_avg_loc_ca_ia1_wrt_n_ia1(cls, loc_ca_ia1_wrt_n_ia1: torch.Tensor):
-        tensor_kwargs = dict(device=loc_ca_ia1_wrt_n_ia1.device, dtype=loc_ca_ia1_wrt_n_ia1.dtype)
-        is_trans = cls.whether_is_trans(loc_ca_ia1_wrt_n_ia1)
+    def to_avg_loc_ca_ia1_wrt_n_ia1(cls, loc_ca_ia1_wrt_n_ia1: torch.Tensor, dtype=None):
+        '''
+        TODO: make use of aatype
+        '''
+        if loc_ca_ia1_wrt_n_ia1.dtype == torch.bool:
+            tensor_kwargs = dict(device=loc_ca_ia1_wrt_n_ia1.device, dtype=torch.float if dtype is None else dtype)
+            is_trans = loc_ca_ia1_wrt_n_ia1
+            avg_loc_ca_ia1_wrt_n_ia1 = torch.zeros(tuple((*loc_ca_ia1_wrt_n_ia1.shape, 3)), **tensor_kwargs)
+        else:
+            tensor_kwargs = dict(device=loc_ca_ia1_wrt_n_ia1.device, dtype=loc_ca_ia1_wrt_n_ia1.dtype)
+            is_trans = cls.whether_is_trans(loc_ca_ia1_wrt_n_ia1)
+            avg_loc_ca_ia1_wrt_n_ia1 = torch.zeros_like(loc_ca_ia1_wrt_n_ia1)
+        
         avg_loc_ca_ia1_wrt_n_ia1_is_trans = torch.tensor(DEF_LOC['ca_ia1_is_trans'], **tensor_kwargs) - torch.tensor(DEF_LOC['n_ia1'], **tensor_kwargs)
         avg_loc_ca_ia1_wrt_n_ia1_is_cis = torch.tensor(DEF_LOC['ca_ia1_is_cis'], **tensor_kwargs) - torch.tensor(DEF_LOC['n_ia1'], **tensor_kwargs)
-        #avg_loc_ca_ia1_wrt_n_ia1 = avg_loc_ca_ia1_wrt_n_ia1_is_trans.unsqueeze(0).repeat(loc_ca_ia1_wrt_n_ia1.shape[0], 1)
-        #avg_loc_ca_ia1_wrt_n_ia1[~is_trans] = avg_loc_ca_ia1_wrt_n_ia1_is_cis
-        avg_loc_ca_ia1_wrt_n_ia1 = torch.zeros_like(loc_ca_ia1_wrt_n_ia1)
         avg_loc_ca_ia1_wrt_n_ia1[is_trans] = avg_loc_ca_ia1_wrt_n_ia1_is_trans
         avg_loc_ca_ia1_wrt_n_ia1[~is_trans] = avg_loc_ca_ia1_wrt_n_ia1_is_cis
         return avg_loc_ca_ia1_wrt_n_ia1
+    
+    @classmethod
+    def sample_pep_iso(cls, batch_size: int, length: int, cis_pep_count_label: Sequence = CIS_PEP_COUNT_STAT_SCOPE['count'], cis_pep_count_prob: Sequence = CIS_PEP_COUNT_STAT_SCOPE['prob'], rng = np.random, device='cpu', dtype=torch.float, return_coords: bool = True):
+        '''
+        TODO: make use of aatype
+        '''
+        length_arr = np.full((batch_size,), fill_value=length)
+        cis_pep_loc = sample_cis_pep_loc(length_arr, cis_pep_count_label=cis_pep_count_label, cis_pep_count_prob=cis_pep_count_prob, rng=rng)
+        batch_idxes = []
+        cis_pep_locs = []
+        for batch_idx in range(batch_size):
+            cur_cis_pep_loc = cis_pep_loc[batch_idx]
+            if len(cur_cis_pep_loc) > 0:
+                batch_idxes.extend([batch_idx]*len(cur_cis_pep_loc))
+                cis_pep_locs.extend(cur_cis_pep_loc)        
+        
+        is_trans = torch.zeros((batch_size, length), device=device, dtype=torch.bool)
+        is_trans[batch_idxes, cis_pep_locs] = False
+        if return_coords:
+            return cls.to_avg_loc_ca_ia1_wrt_n_ia1(is_trans, dtype=dtype)
+        else:
+            return is_trans
     
     def update_is_trans(self, local_ca_ia1: torch.Tensor):
         # TODO: use the geodesics on the 2-sphere? (Related to the Fréchet Mean.)
