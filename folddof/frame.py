@@ -16,7 +16,7 @@
 # @Filename: frame.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-05-26 08:16:22 pm
+# @Last Modified: 2025-05-28 12:01:57 pm
 from typing import Union, List, Optional
 import math
 import torch
@@ -312,7 +312,7 @@ class PeptideUnitFrame(FrameClass):
                 batch_idxes.extend([batch_idx]*len(cur_cis_pep_loc))
                 cis_pep_locs.extend(cur_cis_pep_loc)        
         
-        is_trans = torch.zeros((batch_size, length), device=device, dtype=torch.bool)
+        is_trans = torch.ones((batch_size, length), device=device, dtype=torch.bool)
         is_trans[batch_idxes, cis_pep_locs] = False
         if return_coords:
             return cls.to_avg_loc_ca_ia1_wrt_n_ia1(is_trans, dtype=dtype)
