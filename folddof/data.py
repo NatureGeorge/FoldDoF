@@ -16,7 +16,7 @@
 # @Filename: data.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-09-09 04:07:20 pm
+# @Last Modified: 2025-09-09 05:03:21 pm
 import numpy as np
 
 
@@ -50,7 +50,6 @@ AA_THREE2ONE = {val: key for key, val in AA_ONE2THREE.items()}
 AA_THREE2ONE_MOD = dict(**AA_THREE2ONE)
 
 AA_THREE2ONE_MOD |= dict([
-           ('PYL', 'K'),
            ('00C', 'C'), ('02K', 'A'), ('02Y', 'A'), ('03Y', 'C'),
            ('05N', 'P'), ('05O', 'Y'), ('07O', 'C'), ('0A1', 'Y'),
            ('0A8', 'C'), ('0A9', 'F'), ('0AF', 'W'), ('0AH', 'S'),
