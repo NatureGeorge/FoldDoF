@@ -6,6 +6,8 @@
 <sup>3</sup>Peking-Tsinghua Center for Life Sciences **}**
 Academy for Advanced Interdisciplinary Studies, Peking University </br>
 
+<div align="center"><img width=80% src="./assets/toc.png"></div>
+
 ## Installation
 
 ```bash
@@ -51,7 +53,11 @@ avg_bb_coords = to_backbone(
 savebb2pdb(threeletter_seq, avg_bb_coords, output_path=f'3HSF.0.A.avg.pdb')
 ```
 
-For more usage examples, please turn to `./notebooks/`.
+For more usage examples, please turn to [./notebooks/](./notebooks/).
+
+e.g. [./notebooks/folddof.pymanopt.ipynb](https://nbviewer.org/github/NatureGeorge/folddof/blob/main/notebooks/folddof.pymanopt.ipynb) for optimizing the backbone conformation on $\mathrm{SO(3)}^N$ manifold via $\mathrm{SO(3)}$ connection:
+
+<video src="./assets/folddof.pymanopt.mp4" width="640" height="480" autoplay loop muted controls></video>
 
 ## For FrameFlow Variants
 
@@ -141,4 +147,4 @@ Note that you should install `foldseek` and prepare the PDB100 database (specify
 
 #### Aggregate the Analysis Results:
 
-Please turn to `./notebooks/frameflow.variants.analysis.ipynb`.
+Please turn to [./notebooks/frameflow.variants.analysis.ipynb](./notebooks/frameflow.variants.analysis.ipynb).
