@@ -16,7 +16,7 @@
 # @Filename: __init__.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-05-11 08:28:11 pm
+# @Last Modified: 2025-12-16 02:45:21 pm
 import torch
 import numpy as np
 import roma
@@ -33,7 +33,7 @@ class to_rottrans_mode(Enum):
 
 def to_rottrans(bb_coords: torch.Tensor, bb_masks: Optional[torch.Tensor] = None, mode: Literal[to_rottrans_mode.PeptideUnitFrame, to_rottrans_mode.ResidueFrame] = to_rottrans_mode.PeptideUnitFrame, rot_repr_is_q: bool = False):
     '''
-    shape: L x 4 x ...
+    shape: 4 x L x ...
     '''
     if mode == to_rottrans_mode.PeptideUnitFrame:
         return PeptideUnitFrame.to_rottrans(bb_coords, bb_masks, rot_repr_is_q=rot_repr_is_q)

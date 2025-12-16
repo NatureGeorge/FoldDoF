@@ -16,12 +16,13 @@
 # @Filename: frame.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-05-24 03:00:54 pm
+# @Last Modified: 2025-12-16 02:05:27 pm
 import torch
 import roma
 import math
 import numpy as np
 from itertools import accumulate
+from typing import Optional
 import sys
 from roma.internal import svd
 
@@ -544,3 +545,43 @@ def sample_cis_pep_loc(length: np.ndarray,
             sampled_loc = [cis_aff_sample(range(1, L), existing, rng=rng) for L, existing in zip(length[todo], cis_pep_loc[todo, :count])]
             cis_pep_loc[todo, count] = sampled_loc
     return [sorted({loc for loc in item if loc != 0}) for item in cis_pep_loc.tolist()]
+
+
+def root_mean_square_deviation(x1, x2, w=None):
+    if w is None:
+        return ((x1 - x2) ** 2).sum(axis=-1).mean(axis=-1) ** 0.5
+    else:
+        return ((((x1 - x2) ** 2).sum(axis=-1) * w).sum(axis=-1)/w.sum(axis=-1)) ** 0.5
+
+
+def opt_root_mean_square_deviation(x: torch.Tensor, y: torch.Tensor, w: Optional[torch.Tensor] = None, ret_rmsd_only: bool = True):
+    """
+    Returns the rotation matrix :math:`R` that best aligns an input list of vectors :math:`(x_i)_{i=1...n}` to a target list of vectors :math:`(y_i)_{i=1...n}`,
+    by minimizing the sum of weighted square distance :math:`\sum_i w_i \|R x_i - y_i\|^2`.
+
+    Args:
+        x (...xNxD tensor): list of N points of dimension D.
+        y (...xNxD tensor): list of corresponding target points.
+        w (...xN   tensor): list of corresponding point weights.
+    
+    NOTE: modified from `roma.rigid_points_registration`
+    """
+    if w is None:
+        w = torch.ones(x.shape[:-1], dtype=x.dtype, device=x.device)
+    iwsum = 1. / torch.sum(w, dim=-1)
+    C = torch.einsum('...ji,...jk,...j->...ik', y, x, w)
+    yw = torch.einsum('...j,...jk -> ...k', w, y)
+    xw = torch.einsum('...j,...jk -> ...k', w, x)
+    batch_mul = lambda tensor1, tensor2: torch.einsum('...ij, ... -> ...ij', tensor1, tensor2)
+    C = batch_mul((C - batch_mul(torch.einsum('...i, ...j -> ...ij', yw, xw), iwsum)), iwsum)
+    
+    ymean = torch.einsum('...i, ... -> ...i', yw, iwsum).unsqueeze(-2)
+    xmean = torch.einsum('...i, ... -> ...i', xw, iwsum).unsqueeze(-2)
+    R = roma.special_procrustes(C)
+    t = (ymean - torch.einsum('...ik, ...jk -> ...ji', R, xmean))
+    rmsd = root_mean_square_deviation(torch.einsum('...bi,...ji -> ...bj', x, R) + t, y, w)
+    if ret_rmsd_only:
+        return rmsd
+    else:
+        return R, t.squeeze(-2), rmsd
+

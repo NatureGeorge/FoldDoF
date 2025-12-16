@@ -16,11 +16,12 @@
 # @Filename: io.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-09-09 04:03:21 pm
+# @Last Modified: 2025-12-16 04:27:40 pm
 from typing import Sequence, Optional
 import gemmi
 import torch
 from collections import defaultdict
+from pathlib import Path
 from pdbecif.mmcif_io import CifFileWriter
 from .data import AA_SIDECHAIN_ATOMS, AA_THREE2ONE_MOD
 
@@ -241,3 +242,29 @@ def save2cif(seq: Sequence[str], backbone_coords: torch.Tensor, output_path: str
     cif_dict['_atom_site']['auth_seq_id'] = cif_dict['_atom_site']['label_seq_id']
     cif_dict['_atom_site']['auth_asym_id'] = cif_dict['_atom_site']['label_asym_id']
     CifFileWriter(output_path, **kwargs).write(cif_dict)
+
+
+def merge_pdb(*files, output_path, assert_func = None, model_format='PDB', unlink: bool = False):
+    sts = [gemmi.read_structure(file) for file in files]
+    if assert_func is not None:
+        try:
+            assert_func(sts)
+        except AssertionError as e:
+            print(files, e)
+            return
+    global_counter = len(sts[0])
+    for st in sts[1:]:
+        for model_idx in range(len(st)):
+            global_counter += 1
+            if hasattr(st[model_idx], 'name'):
+                st[model_idx].name = str(global_counter)
+            else:
+                st[model_idx].num = global_counter
+            sts[0].add_model(st[model_idx])
+    if model_format == 'MMCIF':
+        doc = sts[0].make_mmcif_document()
+        doc.write_file(output_path)
+    else:
+        sts[0].write_pdb(output_path)
+    if unlink:
+        for file in files: Path(file).unlink()

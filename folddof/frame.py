@@ -16,7 +16,7 @@
 # @Filename: frame.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-09-09 04:21:45 pm
+# @Last Modified: 2025-12-16 04:17:42 pm
 from typing import Union, List, Optional
 import math
 import torch
@@ -544,6 +544,7 @@ class PeptideUnitFrame(FrameClass):
 
     @classmethod
     def to_rottrans(cls, bb_coords: torch.Tensor, bb_masks: Optional[torch.Tensor] = None, rot_repr_is_q: bool = False):
+        tensor_kwargs = dict(dtype=bb_coords.dtype, device=bb_coords.device)
         pep_frame = cls.from_W_n_ca_c(*bb_coords[:3])
         nter_psi, cter_phi, cter_psi = pep_frame.get_ter_dihedral(*bb_coords[:4])
         nter_frame_q = pep_frame.relative_quat_from_phi_psi(torch.pi, nter_psi)
@@ -551,9 +552,9 @@ class PeptideUnitFrame(FrameClass):
         nter_frame_q = roma.quat_product(pep_frame.frame_q[0], roma.quat_conjugation(nter_frame_q))[None]
         #cter_frame_q = roma.quat_product(pep_frame.frame_q[-1], cter_frame_q)[None]
         cter_frame_q = roma.rotmat_to_unitquat(roma.special_gramschmidt(torch.stack([bb_coords[3, -1] - bb_coords[2, -1], bb_coords[2, -1] - bb_coords[1, -1]], dim=-1)))[None]
-        ter_loc_ca_ia1_wrt_n_ia1= (torch.tensor(DEF_LOC['ca_ia1_is_trans']) - torch.tensor(DEF_LOC['n_ia1']))[None]
+        ter_loc_ca_ia1_wrt_n_ia1= (torch.tensor(DEF_LOC['ca_ia1_is_trans'], **tensor_kwargs) - torch.tensor(DEF_LOC['n_ia1'], **tensor_kwargs))[None]
         global_rots_q = torch.cat((nter_frame_q, pep_frame.frame_q, cter_frame_q))
-        virtual_Cm1 = bb_coords[1, 0] - roma.unitquat_to_rotmat(nter_frame_q) @ torch.tensor(DEF_LOC['ca_ia1_is_trans'])
+        virtual_Cm1 = bb_coords[1, 0] - roma.unitquat_to_rotmat(nter_frame_q) @ torch.tensor(DEF_LOC['ca_ia1_is_trans'], **tensor_kwargs)
         global_trans = torch.cat((virtual_Cm1, bb_coords[2]))
         loc_ca_ia1 = pep_frame.to_local_pos(bb_coords[1, 1:])
         loc_n_ia1 = pep_frame.to_local_pos(bb_coords[0, 1:])

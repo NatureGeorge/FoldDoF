@@ -2,5 +2,6 @@ build/
 __pycache__/
 folddof.egg-info/
 notebooks/dev*.ipynb
+notebooks/pymanopt_cache
 latex/
 base.bib
