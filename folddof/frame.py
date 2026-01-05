@@ -16,14 +16,14 @@
 # @Filename: frame.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-12-16 04:17:42 pm
+# @Last Modified: 2026-01-05 09:45:31 pm
 from typing import Union, List, Optional
 import math
 import torch
 import roma
 import numpy as np
 from .utils import quat_apply, quat_cumprod_sequential, quat_cumprod, dihedral, rad_unwrap, parallel_prefix_sum, clamp_tensor_norm, sample_cis_pep_loc
-from .data import DEF_LOC, CB_LOC, SC_F_ANCHOR_LOC, AA_SIDECHAIN_ATOMS, SC_F_REMAIN_LOC, SC_F_LOC, CIS_PEP_COUNT_STAT_SCOPE
+from .data import DEF_LOC, CB_LOC, SC_F_ANCHOR_LOC, AA_SIDECHAIN_ATOMS, SC_F_REMAIN_LOC, SC_F_LOC, CIS_PEP_COUNT_STAT_SCOPE, RNA_F_LOC
 
 
 class FrameClass:
@@ -777,3 +777,143 @@ class SidechainFrame(FrameClass):
         ) + frameone_ori_1[trp_aaidx].unsqueeze(1).expand(-1, 5, -1)
 
         return avg_sc_coords, avg_sc_mask
+
+
+class RNAResidueUnitFrame(FrameClass):
+    
+    '''
+    Local Coordinate System I for nucleotide defined as:
+    
+    * P_{i} as Origin
+    * P_{i}-O5'_{i} as X-axis
+    * Y-axis that perpendicular to X-axis in the O3'_{i-1}-P_{i}-O5'_{i} plane
+    * Z-axis that perpendicular to the O3'_{i-1}-P_{i}-O5'_{i} plane and form a right-handed coordinate system
+
+    Local Coordinate System II for nucleotide defined as:
+    
+    * C5'_{i} as Origin
+    * C5'_{i}-C4'_{i} as X-axis
+    * Y-axis that perpendicular to X-axis in the O5'_{i}-C5'_{i}-C4'_{i} plane
+    * Z-axis that perpendicular to the O5'_{i}-C5'_{i}-C4'_{i} plane and form a right-handed coordinate system
+
+    Local Coordinate System III for nucleotide defined as:
+    
+    * C3'_{i} as Origin
+    * C3'_{i}-O3'_{i} as X-axis
+    * Y-axis that perpendicular to X-axis in the C4'_{i}-C3'_{i}-O3'_{i} plane
+    * Z-axis that perpendicular to the C4'_{i}-C3'_{i}-O3'_{i} plane and form a right-handed coordinate system
+    '''
+
+    get_reconstruct_ori_base = PeptideUnitFrame.get_reconstruct_ori_base
+
+    @classmethod
+    def form_frame(cls, o3b_coords: torch.Tensor, p_coords: torch.Tensor, o5b_coords: torch.Tensor, rot_repr_is_q: bool = True):
+        func = roma.rotmat_to_unitquat if rot_repr_is_q else lambda x: x
+        return (p_coords, func(roma.special_gramschmidt(torch.stack([o5b_coords - p_coords, p_coords - o3b_coords], dim=2))))
+
+    @classmethod
+    def from_W_bb(cls, o3b_coords: torch.Tensor, p_coords: torch.Tensor,   o5b_coords: torch.Tensor, 
+                       c5b_coords: torch.Tensor, c4b_coords: torch.Tensor, c3b_coords: torch.Tensor, 
+                       op2_coords: torch.Tensor,
+                       rot_repr_is_q: bool = True):
+        
+        o3b_coords = torch.cat((op2_coords, o3b_coords), dim=0)
+        
+        ori_i, frame_rot_i = cls.form_frame(o3b_coords[:-1], p_coords, o5b_coords, rot_repr_is_q=rot_repr_is_q)
+        ori_ii, frame_rot_ii = cls.form_frame(o5b_coords, c5b_coords, c4b_coords, rot_repr_is_q=rot_repr_is_q)
+        ori_iii, frame_rot_iii = cls.form_frame(c4b_coords, c3b_coords, o3b_coords[1:], rot_repr_is_q=rot_repr_is_q)
+        ori = torch.empty(ori_i.size(0)*3, *ori_i.shape[1:], dtype=ori_i.dtype, device=ori_i.device)
+        ori[::3] = ori_i
+        ori[1::3] = ori_ii
+        ori[2::3] = ori_iii
+        frame_rot = torch.empty(frame_rot_i.size(0)*3, *frame_rot_i.shape[1:], dtype=frame_rot_i.dtype, device=frame_rot_i.device)
+        frame_rot[::3] = frame_rot_i
+        frame_rot[1::3] = frame_rot_ii
+        frame_rot[2::3] = frame_rot_iii
+        return cls(ori, frame_rot, rot_repr_is_q)
+    
+    def __init__(self, ori: torch.Tensor, frame_rot: torch.Tensor, rot_repr_is_q: bool = True):
+        self.ori = ori
+        if rot_repr_is_q:
+            self.frame_q = frame_rot
+            self.frame_rot = roma.unitquat_to_rotmat(frame_rot)
+        else:
+            self.frame_q = roma.rotmat_to_unitquat(frame_rot)
+            self.frame_rot = frame_rot
+    
+    @classmethod
+    def to_W_batch_avg_ori(cls, frame_rot: torch.Tensor, dim: int = 0, rot_repr_is_q: bool = True):
+        '''
+        NOTE: default input shape: L(xB)x... can be adjusted by `dim`
+        TODO: update_mask: Optional[torch.Tensor] = None, fix_ori: Optional[torch.Tensor] = None
+
+        O3'_{i-1}-P_{i}-O5'_{i}-C5'_{i}-C4'_{i}-C3'_{i}-O3'_{i}
+        |_____________________|
+                        |_____________________|
+                                        |_____________________|
+        '''
+        tensor_kwargs = dict(dtype=frame_rot.dtype, device=frame_rot.device)
+        to_expand_shape = list(frame_rot.shape)
+        to_expand_shape = to_expand_shape[:(-1 if rot_repr_is_q else -2)]
+        assert to_expand_shape[dim] % 3 == 0
+        to_expand_shape[dim] = to_expand_shape[dim] // 3
+
+        joint_i = torch.tensor([RNA_F_LOC[0]['o3b_im1'], RNA_F_LOC[1]['o5b_i'], RNA_F_LOC[2]['c4b_i']], **tensor_kwargs).expand(*to_expand_shape, 3, 3)
+        joint_i = joint_i.movedim(-2, dim+1).flatten(dim, dim+1)
+        joint_ia1 = torch.tensor([RNA_F_LOC[0]['o5b_i'], RNA_F_LOC[1]['c4b_i'], RNA_F_LOC[2]['o3b_i']], **tensor_kwargs).expand(*to_expand_shape, 3, 3)
+        joint_ia1 = joint_ia1.movedim(-2, dim+1).flatten(dim, dim+1)
+
+        joint_i = torch.narrow(joint_i, dim=dim, start=1, length=joint_i.shape[dim]-1)
+        joint_ia1 = torch.narrow(joint_ia1, dim=dim, start=0, length=joint_ia1.shape[dim]-1)
+        
+        reconstruct_ori = cls.get_reconstruct_ori_base(frame_rot, joint_i, joint_ia1, dim, rot_repr_is_q)
+        return reconstruct_ori
+
+    @classmethod
+    def to_W_batch_avg_backbone_addter_via_rot_trans(cls, frame_rot: torch.Tensor, frame_trans: torch.Tensor, dim: int = 1, rot_repr_is_q: bool = True):
+        '''
+        convert global pose to full atom backbone coordinates
+
+        NOTE: input shape: BxLx... (dim=1)
+
+        O3'_{i-1}-P_{i}-O5'_{i}-C5'_{i}-C4'_{i}-C3'_{i}-O3'_{i}
+        |_____________________|
+                        |_____________________|
+                                        |_____________________|
+        '''
+        L = frame_rot.shape[dim]
+        indices_I = torch.arange(0, L, 3, device=frame_rot.device)
+        indices_II = torch.arange(1, L, 3, device=frame_rot.device)
+        indices_III = torch.arange(2, L, 3, device=frame_rot.device)
+        frame_rot_I, frame_rot_II, frame_rot_III = torch.index_select(frame_rot, dim, indices_I) , torch.index_select(frame_rot, dim, indices_II), torch.index_select(frame_rot, dim, indices_III)
+        frame_trans_I, frame_trans_II, frame_trans_III = torch.index_select(frame_trans, dim, indices_I) , torch.index_select(frame_trans, dim, indices_II), torch.index_select(frame_trans, dim, indices_III)
+        tensor_kwargs = dict(dtype=frame_rot.dtype, device=frame_rot.device)
+
+        loc_op1_i_I = torch.tensor(RNA_F_LOC[0]['op1_i'], **tensor_kwargs).expand(*frame_rot_I.shape[:(-1 if rot_repr_is_q else -2)], -1)
+        loc_op2_i_I = torch.tensor(RNA_F_LOC[0]['op2_i'], **tensor_kwargs).expand(*frame_rot_I.shape[:(-1 if rot_repr_is_q else -2)], -1)
+        loc_o3b_im1_I = torch.tensor(RNA_F_LOC[0]['o3b_im1'], **tensor_kwargs)
+        loc_o5b_i_I = torch.tensor(RNA_F_LOC[0]['o5b_i'], **tensor_kwargs).expand(*frame_rot_I.shape[:(-1 if rot_repr_is_q else -2)], -1)
+        loc_c4b_i_II = torch.tensor(RNA_F_LOC[1]['c4b_i'], **tensor_kwargs).expand(*frame_rot_I.shape[:(-1 if rot_repr_is_q else -2)], -1)
+        loc_o3b_i_III = torch.tensor(RNA_F_LOC[2]['o3b_i'], **tensor_kwargs).expand(*frame_rot_I.shape[:(-1 if rot_repr_is_q else -2)], -1)
+        
+        to_W_pos = (lambda some_frame_rot, some_frame_trans, some_loc_coords: quat_apply(some_frame_rot, some_loc_coords) + some_frame_trans) if rot_repr_is_q else (lambda some_frame_rot, some_frame_trans, some_loc_coords: torch.einsum('...ij,...j->...i', some_frame_rot, some_loc_coords) + some_frame_trans)
+        
+        # NOTE: for 5' terminal, it should use O3' loc coord
+        # TODO: check
+        avg_op2 = to_W_pos(frame_rot_I, frame_trans_I, loc_op2_i_I)
+        initial_index = torch.tensor([0], device=avg_op2.device, dtype=torch.int64)
+        initial_shape = list(frame_rot_I.shape[:(-1 if rot_repr_is_q else -2)]); initial_shape[dim] = 1
+        avg_o3b_im1 = to_W_pos(torch.index_select(frame_rot_I, dim, initial_index), torch.index_select(frame_trans_I, dim, initial_index), loc_o3b_im1_I.expand(*initial_shape, -1))
+        avg_op2.index_copy_(dim=dim, index=initial_index, source=avg_o3b_im1)
+        
+        return torch.stack([
+                frame_trans_I,                                           # P   
+                to_W_pos(frame_rot_I, frame_trans_I, loc_o5b_i_I),       # O5'
+                frame_trans_II,                                          # C5'   
+                to_W_pos(frame_rot_II, frame_trans_II, loc_c4b_i_II),    # C4'
+                frame_trans_III,                                         # C3'
+                to_W_pos(frame_rot_III, frame_trans_III, loc_o3b_i_III), # O3'
+                
+                to_W_pos(frame_rot_I, frame_trans_I, loc_op1_i_I),       # OP1 
+                avg_op2,                                                 # OP2
+            ], dim=dim+1) # BxLx8x3 (dim=1)

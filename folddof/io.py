@@ -16,8 +16,8 @@
 # @Filename: io.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-12-16 04:27:40 pm
-from typing import Sequence, Optional
+# @Last Modified: 2026-01-05 09:58:52 pm
+from typing import Sequence, Optional, Literal
 import gemmi
 import torch
 from collections import defaultdict
@@ -120,6 +120,92 @@ ATOM  {serial+3:>5}  {atom_names[3]:<4}{aa_name} A{aa_idx+1:>4}    {backbone_coo
                 cb_name = 'CB'
                 handle.write(f'ATOM  {serial:>5}  {cb_name:<4}{aa_name} A{aa_idx+1:>4}    {backbone_coords[aa_idx, 4, 0]:>8.3f}{backbone_coords[aa_idx, 4, 1]:>8.3f}{backbone_coords[aa_idx, 4, 2]:>8.3f}  1.00 20.00           C\n')
                 serial += 1
+        handle.write('END\n')
+
+
+def savebb2pdb(
+    seq: Sequence[str], 
+    backbone_coords: torch.Tensor, 
+    output_path: str, 
+    with_cb: bool = False,
+    mol_type: Literal['protein', 'rna'] = 'protein',
+    chain_id: str = 'A'
+):
+    """
+    Saving backbone Cartesian coordinates into PDB file.
+    
+    For proteins: N-Cα-CO atoms (and optionally CB)
+    For RNA: P-O5'-C5'-C4'-C3'
+            /\
+         OP1  OP2
+    
+    Args:
+        seq (Sequence[str]): 
+            For proteins: three-letter-code sequence (e.g., "ALA", "GLY")
+            For RNA: one-letter-code sequence (e.g., "A", "U", "G", "C")
+        backbone_coords (torch.Tensor): 
+            For proteins: shape(NumRes x 4 x 3) for [N, CA, C, O] 
+                          or shape(NumRes x 5 x 3) if with_cb=True
+            For RNA: shape(NumRes x 8 x 3) for [O3', P, O5', C5', C4', C3', OP1, OP2]
+        output_path (str): the output file path to save
+        with_cb (bool): for proteins only, whether to include CB atoms
+        mol_type (str): 'protein' or 'rna'
+        chain_id (str): chain identifier (default: 'A')
+    """
+    serial = 1
+    residue_number = 1
+    
+    with open(output_path, 'wt') as handle:
+        if mol_type == 'protein':
+            atom_names = ['N', 'CA', 'C', 'O']
+            atom_elements = ['N', 'C', 'C', 'O']
+            
+            for aa_idx in range(backbone_coords.shape[0]):
+                aa_name = seq[aa_idx]
+                for atom_idx in range(4):
+                    x, y, z = backbone_coords[aa_idx, atom_idx].tolist()
+                    handle.write(
+                        f"ATOM  {serial:>5}  {atom_names[atom_idx]:<3} {aa_name:>3} {chain_id}{residue_number:>4}    "
+                        f"{x:>8.3f}{y:>8.3f}{z:>8.3f}  1.00 20.00           {atom_elements[atom_idx]:>2}\n"
+                    )
+                    serial += 1
+                if with_cb and aa_name != 'GLY' and backbone_coords.shape[1] > 4:
+                    x, y, z = backbone_coords[aa_idx, 4].tolist()
+                    handle.write(
+                        f"ATOM  {serial:>5}  CB  {aa_name:>3} {chain_id}{residue_number:>4}    "
+                        f"{x:>8.3f}{y:>8.3f}{z:>8.3f}  1.00 20.00           C\n"
+                    )
+                    serial += 1
+                
+                residue_number += 1
+                
+        elif mol_type == 'rna':
+            atom_names = ["O3'", "P", "O5'", "C5'", "C4'", "C3'", "OP1", "OP2"]
+            atom_elements = ['O', 'P', 'O', 'C', 'C', 'C', 'O', 'O']
+            
+            rna_code_map = {
+                'A': '  A', 'U': '  U', 'G': '  G', 'C': '  C',
+                'a': '  A', 'u': '  U', 'g': '  G', 'c': '  C'
+            }
+            
+            for nt_idx in range(backbone_coords.shape[0]):
+                nt_1letter = seq[nt_idx]
+                nt_name = rna_code_map.get(nt_1letter, f' {nt_1letter:<2}')
+                for atom_idx in range(8):
+                    x, y, z = backbone_coords[nt_idx, atom_idx].tolist()
+                    atom_name = atom_names[atom_idx]
+                    padded_atom_name = atom_name.rjust(3) if "'" in atom_name else f" {atom_name:<2}"
+                    
+                    handle.write(
+                        f"ATOM  {serial:>5} {padded_atom_name} {nt_name} {chain_id}{residue_number:>4}    "
+                        f"{x:>8.3f}{y:>8.3f}{z:>8.3f}  1.00 20.00           {atom_elements[atom_idx]:>2}\n"
+                    )
+                    serial += 1
+                
+                residue_number += 1
+        else:
+            raise ValueError(f"Unknown molecule type: {mol_type}. Must be 'protein' or 'rna'")
+        
         handle.write('END\n')
 
 

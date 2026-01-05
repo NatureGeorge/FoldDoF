@@ -33,7 +33,7 @@ cd FoldDoF
 pip install -e .
 ```
 
-## Basic Usgae
+## Basic Usage
 
 > backbone reconstruction from idealized peptide isomers as example
 
@@ -114,6 +114,8 @@ python -W ignore experiments/train_se3_flows.py bb_repr=global_pep scope_dataset
 If `inference.samples.seq_per_sample` > 0, you should install ESMFold and ProteinMPNN. By default, `inference.samples.seq_per_sample` is 8.
 
 #### Checkpoint Paths
+
+If you want to use the pretrained model weights, please turn to [Zenodo](https://doi.org/10.5281/zenodo.17951384) for downloading below files:
 
 ```bash
 export frameflow_ckpt_path=weights/frameflow.ckpt
