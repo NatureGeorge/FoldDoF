@@ -16,7 +16,7 @@
 # @Filename: frame.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2026-01-06 08:21:21 pm
+# @Last Modified: 2026-02-22 11:27:58 am
 from typing import Union, List, Optional
 import math
 import torch
@@ -631,52 +631,255 @@ class SidechainFrame(FrameClass):
         return roma.quat_product(roma.quat_conjugation(self.frame_q), another.frame_q)
 
     @classmethod
-    def get_sc_relative_quat(cls, three_letter_seq_arr, bb_coords, sc_coords):
-        sc_relative_quat = torch.zeros((bb_coords.shape[0], 2, 4), dtype=bb_coords.dtype, device=bb_coords.device)
-        sc_relative_quat[:,:,-1] = 1
+    def get_sc_global_frame(cls, three_letter_seq_arr, bb_coords, bb_masks, sc_coords, sc_masks):
+        #sc_relative_quat = torch.zeros((bb_coords.shape[0], 2, 4), dtype=bb_coords.dtype, device=bb_coords.device)
+        #sc_relative_quat[:,:,-1] = 1
+        #sc_relative_quat_mask = torch.zeros((bb_coords.shape[0], 2), dtype=torch.bool, device=bb_coords.device)
+        obs_mask = bb_masks[:, :3].all(dim=-1)
+        sc_global_quat = torch.zeros((bb_coords.shape[0], 3, 4), dtype=bb_coords.dtype, device=bb_coords.device)
+        sc_global_quat[:,:,-1] = 1
+        sc_global_trans = torch.zeros((bb_coords.shape[0], 3, 3), dtype=bb_coords.dtype, device=bb_coords.device)
+        sc_global_mask = torch.zeros((bb_coords.shape[0], 3), dtype=torch.bool, device=bb_coords.device)
         for aa_kind in set(three_letter_seq_arr):
             cur_aa_kind_idx = np.where(three_letter_seq_arr==aa_kind)[0]
             cur_aa_kind_bb_coords = bb_coords[cur_aa_kind_idx]
             cur_aa_kind_sc_coords = sc_coords[cur_aa_kind_idx]
+
+            cur_aa_kind_bb_masks = bb_masks[cur_aa_kind_idx]
+            cur_aa_kind_sc_masks = sc_masks[cur_aa_kind_idx]
             
             n  = cur_aa_kind_bb_coords[:, 0]
             ca = cur_aa_kind_bb_coords[:, 1]
             c  = cur_aa_kind_bb_coords[:, 2]
             cb = cur_aa_kind_sc_coords[:, 0]
 
+            n_mask = cur_aa_kind_bb_masks[:, 0]
+            ca_mask = cur_aa_kind_bb_masks[:, 1]
+            c_mask = cur_aa_kind_bb_masks[:, 2]
+            cb_mask = cur_aa_kind_sc_masks[:, 0]
+            sc1_mask = cur_aa_kind_sc_masks[:, 1]
+            sc2_mask = cur_aa_kind_sc_masks[:, 2]
+            sc3_mask = cur_aa_kind_sc_masks[:, 3]
+            sc4_mask = cur_aa_kind_sc_masks[:, 4]
+
             if aa_kind in ("PRO", "ASP", "ASN", "LEU", "LYS", "ARG", "HIS", "PHE", "TYR", "TRP"):
                 frame_list = [
                     cls.from_W_3(cb, ca, c),
                     cls.from_W_3(cur_aa_kind_sc_coords[:, 2], cur_aa_kind_sc_coords[:, 1], cb)
                 ]
+                frame_masks = [
+                    cb_mask & ca_mask & c_mask,
+                    sc2_mask & sc1_mask & cb_mask,
+                ]
+                frame_ori_list = [ca, cur_aa_kind_sc_coords[:, 1]]
             elif aa_kind == "ILE":
                 frame_list = [
                     cls.from_W_3(cb, ca, c),
                     cls.from_W_3(cur_aa_kind_sc_coords[:, 3], cur_aa_kind_sc_coords[:, 1], cb)
                 ]
+                frame_masks = [
+                    cb_mask & ca_mask & c_mask,
+                    sc3_mask & sc1_mask & cb_mask,
+                ]
+                frame_ori_list = [ca, cur_aa_kind_sc_coords[:, 1]]
             elif aa_kind in cls.NCAC_FRAME_ONE_AA:
                 frame_list = [
                     cls.from_W_3(n, ca, c),
                     cls.from_W_3(cur_aa_kind_sc_coords[:, 1], cb, ca)
                 ]
+                frame_masks = [
+                    n_mask & ca_mask & c_mask,
+                    sc1_mask & cb_mask & ca_mask,
+                ]
+                frame_ori_list = [ca, cb]
+            elif aa_kind in ("GLY", "ALA"):
+                n_ca_c = cls.from_W_3(n, ca, c)
+                n_ca_c_mask = n_mask & ca_mask & c_mask
+                frame_list = [n_ca_c, n_ca_c]
+                frame_masks = [n_ca_c_mask, torch.zeros_like(n_ca_c_mask)]
+                frame_ori_list = [ca, ca]
             else:
                 #print(f"skip '{aa_kind}'")
                 continue
             if aa_kind in ("ARG", "LYS"):
                 frame_list.append(cls.from_W_3(cur_aa_kind_sc_coords[:, 4], cur_aa_kind_sc_coords[:, 3], cur_aa_kind_sc_coords[:, 2]))
+                frame_masks.append(sc4_mask & sc3_mask & sc2_mask)
+                frame_ori_list.append(cur_aa_kind_sc_coords[:, 3])
             elif aa_kind in ("MET", "GLN", "GLU"):
                 frame_list.append(cls.from_W_3(cur_aa_kind_sc_coords[:, 3], cur_aa_kind_sc_coords[:, 2], cur_aa_kind_sc_coords[:, 1]))
-
-            for rf_idx in range(1, len(frame_list)):
-                sc_relative_quat[cur_aa_kind_idx, rf_idx-1] = frame_list[rf_idx-1].relative_quat(frame_list[rf_idx])
-        return sc_relative_quat
+                frame_masks.append(sc3_mask & sc2_mask & sc1_mask)
+                frame_ori_list.append(cur_aa_kind_sc_coords[:, 2])
+            else:
+                frame_list.append(frame_list[-1])
+                frame_masks.append(torch.zeros_like(frame_masks[-1]))
+                frame_ori_list.append(frame_ori_list[-1])
+            
+            for rf_idx in range(len(frame_list)):
+                #sc_relative_quat[cur_aa_kind_idx, rf_idx-1] = frame_list[rf_idx-1].relative_quat(frame_list[rf_idx])
+                #sc_relative_quat_mask[cur_aa_kind_idx, rf_idx-1] = frame_masks[rf_idx-1] & frame_masks[rf_idx]
+                sc_global_quat[cur_aa_kind_idx, rf_idx] = frame_list[rf_idx].frame_q
+                sc_global_trans[cur_aa_kind_idx, rf_idx] = frame_ori_list[rf_idx]
+                sc_global_mask[cur_aa_kind_idx, rf_idx] = frame_masks[rf_idx]
+        
+        assert sc_global_mask[obs_mask, 0].all() # NOTE: add virtual cb if input has no cb
+        if not obs_mask.all():
+            batch_idx = torch.where(sc_global_quat[~obs_mask, 0].isnan())[0].unique()
+            batch_idx = torch.where(~obs_mask)[0][batch_idx]
+            sc_global_quat[batch_idx, 0] = torch.tensor([0, 0, 0, 1], device=sc_global_quat.device, dtype=sc_global_quat.dtype)
+            sc_global_trans[~obs_mask, 0] = sc_global_trans[~obs_mask, 0].nan_to_num_(0)
+            
+        for _ in range(2):
+            batch_idx, frame_idx = torch.where(torch.isnan(sc_global_quat))[:2]
+            if batch_idx.shape[0] == 0: break
+            assert (frame_idx >= 1).all()
+            sc_global_quat[batch_idx, frame_idx] = sc_global_quat[batch_idx, frame_idx-1]
+            sc_global_trans[batch_idx, frame_idx] = sc_global_trans[batch_idx, frame_idx-1]
+        for frame_idx in range(1, 3):
+            batch_idx = torch.where(sc_global_trans[obs_mask, frame_idx].norm(dim=-1) == 0)[0]
+            if batch_idx.shape[0] == 0: continue
+            batch_idx = torch.where(obs_mask)[0][batch_idx]
+            assert not sc_global_mask[batch_idx, frame_idx].any()
+            sc_global_quat[batch_idx, frame_idx] = sc_global_quat[batch_idx, frame_idx-1]
+            sc_global_trans[batch_idx, frame_idx] = sc_global_trans[batch_idx, frame_idx-1]
+            
+        assert not sc_global_quat.isnan().any()
+        assert not sc_global_trans.isnan().any()
+        assert (sc_global_trans[obs_mask, 1:].norm(dim=-1) > 0).all()
+        """
+        # NOTE: for: 1HFF_A_complete_theseus_merge_sup.pdb.gz
+        potential_issue_mask = sc_global_trans[obs_mask, 1:].norm(dim=-1) == 0
+        if not (~potential_issue_mask).all():
+            assert (sc_global_trans[obs_mask, 0][potential_issue_mask.any(dim=-1)].norm(dim=-1) == 0).all()
+        """
+        return sc_global_quat, sc_global_trans, sc_global_mask
 
     @classmethod
-    def to_W_avg_sidechain(cls, three_letter_seq_arr, bb_coords, sc_relative_quat):
-        # TODO: batch
+    def get_sc_relative_quat_from_global_frame(cls, sc_global_quat, sc_global_mask):
+        sc_relative_quat = roma.quat_product(roma.quat_conjugation(sc_global_quat[..., :-1, :]), sc_global_quat[..., 1:, :])
+        sc_relative_quat_mask = sc_global_mask[..., :-1] & sc_global_mask[..., 1:]
+        return sc_relative_quat, sc_relative_quat_mask
+
+    @classmethod
+    def get_sc_relative_quat(cls, three_letter_seq_arr, bb_coords, bb_masks, sc_coords, sc_masks):
+        sc_global_quat, sc_global_trans, sc_global_mask = cls.get_sc_global_frame(three_letter_seq_arr, bb_coords, bb_masks, sc_coords, sc_masks)
+        return cls.get_sc_relative_quat_from_global_frame(sc_global_quat, sc_global_mask)
+
+    @classmethod
+    def to_W_avg_sidechain_via_rots_trans(cls, three_letter_seq_arr, sc_global_quat: torch.Tensor, sc_global_trans: torch.Tensor, bb_coords: torch.Tensor):
+        batch_shape = None
+        if len(sc_global_quat.shape) > 3:
+            three_letter_seq_arr = np.broadcast_to(three_letter_seq_arr[None], (sc_global_quat.shape[0], sc_global_quat.shape[1])).flatten()
+            sc_global_quat, batch_shape = roma.internal.flatten_batch_dims(sc_global_quat, end_dim=-3)
+            sc_global_trans, batch_shape_ = roma.internal.flatten_batch_dims(sc_global_trans, end_dim=-3)
+            assert (batch_shape == batch_shape_)
+            bb_coords, batch_shape = roma.internal.flatten_batch_dims(bb_coords, end_dim=-3)
+            assert (batch_shape == batch_shape_)
         frame_mask = np.isin(three_letter_seq_arr, cls.NCAC_FRAME_ONE_AA)
         frame_rev_mask_exlude_gly = (~frame_mask) & (three_letter_seq_arr != 'GLY')
+        tensor_kwargs = dict(dtype=sc_global_quat.dtype, device=sc_global_quat.device)
+        sc_glo_quat = sc_global_quat
+        frameone_ori_1 = sc_global_trans[:, 1]
+        frameone_ori_2 = sc_global_trans[:, 2]
+        anchor_atoms = torch.tensor([SC_F_ANCHOR_LOC[aa] for aa in three_letter_seq_arr], **tensor_kwargs)
+        frame_joint = quat_apply(sc_glo_quat[:, 1], anchor_atoms[:, 2]) + frameone_ori_1
+        avg_sc_coords = torch.zeros((sc_global_quat.shape[0], 10, 3), **tensor_kwargs)
+        avg_sc_mask = torch.tensor([[True]*len(AA_SIDECHAIN_ATOMS[aa])+[False]*(10-len(AA_SIDECHAIN_ATOMS[aa])) for aa in three_letter_seq_arr], dtype=torch.bool)
+
         n_ca_c_frameone = cls.from_W_3(*bb_coords.transpose(0, 1)[:3])
+        n_ca_c_frameone_s_loc_cb = torch.tensor([CB_LOC[aa] for aa in three_letter_seq_arr[frame_rev_mask_exlude_gly]], **tensor_kwargs).reshape(-1, 3)
+        n_ca_c_frameone_s_W_cb = n_ca_c_frameone.to_W_pos_i(n_ca_c_frameone_s_loc_cb, frame_rev_mask_exlude_gly)
+        avg_sc_coords[frame_rev_mask_exlude_gly, 0] = n_ca_c_frameone_s_W_cb
+        avg_sc_coords[frame_mask, 0] = frameone_ori_1[frame_mask]
+        avg_sc_coords[frame_rev_mask_exlude_gly, 1] = frameone_ori_1[frame_rev_mask_exlude_gly]
+        avg_sc_coords[(three_letter_seq_arr == 'ALA'), 1] = 0
+        atom_1_aaidx = np.isin(three_letter_seq_arr, ('SER', 'CYS', 'SEC', 'VAL', 'THR', ))
+        atom_1_loc = torch.tensor([SC_F_REMAIN_LOC[aa][0] for aa in three_letter_seq_arr[atom_1_aaidx]], **tensor_kwargs).reshape(-1, 3)
+        avg_sc_coords[atom_1_aaidx, 1] = quat_apply(sc_glo_quat[atom_1_aaidx, 1], atom_1_loc) + frameone_ori_1[atom_1_aaidx]
+        atom_1_joint_aaidx = np.isin(three_letter_seq_arr, ('MET', 'GLN', 'GLU'))
+        avg_sc_coords[atom_1_joint_aaidx, 1] = frame_joint[atom_1_joint_aaidx]
+        avg_sc_coords[atom_1_joint_aaidx, 2] = frameone_ori_2[atom_1_joint_aaidx]
+        atom_2_joint_aaidx = np.isin(three_letter_seq_arr, ('LYS', 'ARG'))
+        avg_sc_coords[atom_2_joint_aaidx, 2] = frame_joint[atom_2_joint_aaidx]
+        avg_sc_coords[atom_2_joint_aaidx, 3] = frameone_ori_2[atom_2_joint_aaidx]
+        atom_2_aaidx = np.isin(three_letter_seq_arr, ('VAL', 'THR', 'ILE', 'PRO', 'ASP', 'ASN', 'LEU', 'HIS', 'PHE', 'TYR', 'TRP')) # skip ILE
+        atom_2_loc = torch.tensor([SC_F_REMAIN_LOC[aa][int(aa in ('VAL', 'THR'))] for aa in three_letter_seq_arr[atom_2_aaidx]], **tensor_kwargs).reshape(-1, 3)
+        avg_sc_coords[atom_2_aaidx, 2] = quat_apply(sc_glo_quat[atom_2_aaidx, 1], atom_2_loc) + frameone_ori_1[atom_2_aaidx]
+
+        ile_aaidx = three_letter_seq_arr == "ILE"
+        avg_sc_coords[ile_aaidx, 3] = avg_sc_coords[ile_aaidx, 2]
+        avg_sc_coords[ile_aaidx, 2] = cls.from_W_3(avg_sc_coords[ile_aaidx, 1], avg_sc_coords[ile_aaidx, 0], sc_global_trans[ile_aaidx, 0]).to_W_pos(
+            torch.tensor([SC_F_LOC['ILE']['CG2']], **tensor_kwargs).expand(ile_aaidx.sum(), 3)
+        )
+        atom_3_aaidx_a = np.isin(three_letter_seq_arr, ('ASP', 'ASN', 'LEU', 'HIS', 'PHE', 'TYR', 'TRP'))
+        atom_3_aaidx_b = np.isin(three_letter_seq_arr, ('MET', 'GLU', 'GLN'))
+        avg_sc_coords[atom_3_aaidx_a, 3] = quat_apply(
+                sc_glo_quat[atom_3_aaidx_a, 1],
+                torch.tensor([SC_F_REMAIN_LOC[aa][1] for aa in three_letter_seq_arr[atom_3_aaidx_a]], **tensor_kwargs).reshape(-1, 3)
+            ) + frameone_ori_1[atom_3_aaidx_a]
+        avg_sc_coords[atom_3_aaidx_b, 3] = quat_apply(
+                sc_glo_quat[atom_3_aaidx_b, 2],
+                torch.tensor([SC_F_REMAIN_LOC[aa][0] for aa in three_letter_seq_arr[atom_3_aaidx_b]], **tensor_kwargs).reshape(-1, 3)
+            ) + frameone_ori_2[atom_3_aaidx_b]
+        atom_4_aaidx_a = np.isin(three_letter_seq_arr, ('HIS', 'PHE', 'TYR', 'TRP'))
+        atom_4_aaidx_b = np.isin(three_letter_seq_arr, ('LYS', 'ARG', 'GLU', 'GLN'))
+
+        avg_sc_coords[atom_4_aaidx_a, 4] = quat_apply(
+                sc_glo_quat[atom_4_aaidx_a, 1],
+                torch.tensor([SC_F_REMAIN_LOC[aa][2] for aa in three_letter_seq_arr[atom_4_aaidx_a]], **tensor_kwargs).reshape(-1, 3)
+            ) + frameone_ori_1[atom_4_aaidx_a]
+        avg_sc_coords[atom_4_aaidx_b, 4] = quat_apply(
+                sc_glo_quat[atom_4_aaidx_b, 2],
+                torch.tensor([SC_F_REMAIN_LOC[aa][int(aa in ('GLU', 'GLN'))] for aa in three_letter_seq_arr[atom_4_aaidx_b]], **tensor_kwargs).reshape(-1, 3)
+            ) + frameone_ori_2[atom_4_aaidx_b]
+        arg_aaidx = three_letter_seq_arr == "ARG"
+        his_aaidx = three_letter_seq_arr == "HIS"
+        phe_aaidx = three_letter_seq_arr == "PHE"
+        tyr_aaidx = three_letter_seq_arr == "TYR"
+        trp_aaidx = three_letter_seq_arr == "TRP"
+        avg_sc_coords[arg_aaidx, 5:7] = roma.quat_action(
+            sc_glo_quat[arg_aaidx, 2].unsqueeze(1).expand(-1, 2, -1),
+            torch.tensor([SC_F_REMAIN_LOC["ARG"][1:]], **tensor_kwargs).expand(arg_aaidx.sum(),-1,3),
+            True
+        ) + frameone_ori_2[arg_aaidx].unsqueeze(1).expand(-1, 2, -1)
+        avg_sc_coords[his_aaidx, 5] = quat_apply(
+            sc_glo_quat[his_aaidx, 1],
+            torch.tensor([SC_F_REMAIN_LOC["HIS"][-1]], **tensor_kwargs).expand(his_aaidx.sum(), 3)
+        ) + frameone_ori_1[his_aaidx]
+        avg_sc_coords[phe_aaidx, 5:7] = roma.quat_action(
+            sc_glo_quat[phe_aaidx, 1].unsqueeze(1).expand(-1, 2, -1),
+            torch.tensor([SC_F_REMAIN_LOC["PHE"][-2:]], **tensor_kwargs).expand(phe_aaidx.sum(),-1,3),
+            True
+        ) + frameone_ori_1[phe_aaidx].unsqueeze(1).expand(-1, 2, -1)
+        avg_sc_coords[tyr_aaidx, 5:8] = roma.quat_action(
+            sc_glo_quat[tyr_aaidx, 1].unsqueeze(1).expand(-1, 3, -1),
+            torch.tensor([SC_F_REMAIN_LOC["TYR"][-3:]], **tensor_kwargs).expand(tyr_aaidx.sum(),-1,3),
+            True
+        ) + frameone_ori_1[tyr_aaidx].unsqueeze(1).expand(-1, 3, -1)
+        avg_sc_coords[trp_aaidx, 5:10] = roma.quat_action(
+            sc_glo_quat[trp_aaidx, 1].unsqueeze(1).expand(-1, 5, -1),
+            torch.tensor([SC_F_REMAIN_LOC["TRP"][-5:]], **tensor_kwargs).expand(trp_aaidx.sum(),-1,3),
+            True
+        ) + frameone_ori_1[trp_aaidx].unsqueeze(1).expand(-1, 5, -1)
+
+        if batch_shape is not None:
+            avg_sc_coords = roma.internal.unflatten_batch_dims(avg_sc_coords, batch_shape)
+            avg_sc_mask = roma.internal.unflatten_batch_dims(avg_sc_mask, batch_shape)
+        
+        return avg_sc_coords, avg_sc_mask
+
+    @classmethod
+    def to_W_avg_sidechain(cls, three_letter_seq_arr, bb_coords, bb_masks, sc_relative_quat, sc_relative_quat_mask, return_global_pose: bool = False, return_global_pose_only: bool = False):
+        # TODO: batch
+        # TODO: change avg_sc_mask according to bb_masks and sc_relative_quat_mask
+        batch_shape = None
+        if len(bb_coords.shape) > 3:
+            three_letter_seq_arr = np.broadcast_to(three_letter_seq_arr[None], (bb_coords.shape[0], bb_coords.shape[1])).flatten()
+            bb_coords, batch_shape = roma.internal.flatten_batch_dims(bb_coords, end_dim=-3)
+            sc_relative_quat, batch_shape_ = roma.internal.flatten_batch_dims(sc_relative_quat, end_dim=-3)
+            assert (batch_shape == batch_shape_)
+        frame_mask = np.isin(three_letter_seq_arr, cls.NCAC_FRAME_ONE_AA)
+        frame_rev_mask_exlude_gly = (~frame_mask) & (three_letter_seq_arr != 'GLY')
+        n_ca_c_frameone_ = n_ca_c_frameone = cls.from_W_3(*bb_coords.transpose(0, 1)[:3])
         tensor_kwargs = dict(dtype=bb_coords.dtype, device=bb_coords.device)
         n_ca_c_frameone_s_loc_cb = torch.tensor([CB_LOC[aa] for aa in three_letter_seq_arr[frame_rev_mask_exlude_gly]], **tensor_kwargs).reshape(-1, 3)
         n_ca_c_frameone_s_W_cb = n_ca_c_frameone.to_W_pos_i(n_ca_c_frameone_s_loc_cb, frame_rev_mask_exlude_gly)
@@ -693,7 +896,7 @@ class SidechainFrame(FrameClass):
         frameone_ori[frame_rev_mask_exlude_gly] = cb_ca_c_frameone.ori
         anchor_atoms[frame_rev_mask_exlude_gly, 0] = cb_ca_c_frameone.to_local_pos(n_ca_c_frameone_s_W_cb)
         sc_relative_quat = torch.cat((frameone_quat.unsqueeze(1), sc_relative_quat), dim=1)
-        sc_glo_quat = quat_cumprod(sc_relative_quat, dim=1)
+        sc_glo_quat = quat_cumprod(sc_relative_quat.transpose(0, 1), add_head=False).transpose(0, 1)
         
         frameone_ori_1 = quat_apply(sc_glo_quat[:, 0], anchor_atoms[:, 0]) + frameone_ori - quat_apply(sc_glo_quat[:, 1], anchor_atoms[:, 1])
         frame_joint = quat_apply(sc_glo_quat[:, 1], anchor_atoms[:, 2]) + frameone_ori_1
@@ -701,12 +904,24 @@ class SidechainFrame(FrameClass):
         # frameone_ori_1: CB;CG;CG1(ILE)
         # frame_joint:  CD(ARG,LYS);CG(MET,GLN,GLU)
         # frameone_ori_2: NE(ARG);CE(LYS);SD(MET);CD(GLN,GLU)
+        
+        if return_global_pose_only and return_global_pose:
+            sc_glo_trans = torch.stack((frameone_ori, frameone_ori_1, frameone_ori_2), dim=-2)
+            ala_gly_aaidx = np.isin(three_letter_seq_arr, ('GLY', 'ALA', ))
+            sc_glo_quat[ala_gly_aaidx, :] = n_ca_c_frameone_.frame_q[ala_gly_aaidx].unsqueeze(-2)
+            sc_glo_trans[ala_gly_aaidx, :] = n_ca_c_frameone_.ori[ala_gly_aaidx].unsqueeze(-2)
+            if batch_shape is not None:
+                sc_glo_quat = roma.internal.unflatten_batch_dims(sc_glo_quat, batch_shape)
+                sc_glo_trans = roma.internal.unflatten_batch_dims(sc_glo_trans, batch_shape)
+            return sc_glo_quat, sc_glo_trans
+        
         avg_sc_coords = torch.zeros((sc_relative_quat.shape[0], 10, 3), **tensor_kwargs)
         avg_sc_mask = torch.tensor([[True]*len(AA_SIDECHAIN_ATOMS[aa])+[False]*(10-len(AA_SIDECHAIN_ATOMS[aa])) for aa in three_letter_seq_arr], dtype=torch.bool)
 
         avg_sc_coords[frame_rev_mask_exlude_gly, 0] = n_ca_c_frameone_s_W_cb
         avg_sc_coords[frame_mask, 0] = frameone_ori_1[frame_mask]
         avg_sc_coords[frame_rev_mask_exlude_gly, 1] = frameone_ori_1[frame_rev_mask_exlude_gly]
+        avg_sc_coords[(three_letter_seq_arr == 'ALA'), 1] = 0
         atom_1_aaidx = np.isin(three_letter_seq_arr, ('SER', 'CYS', 'SEC', 'VAL', 'THR', ))
         atom_1_loc = torch.tensor([SC_F_REMAIN_LOC[aa][0] for aa in three_letter_seq_arr[atom_1_aaidx]], **tensor_kwargs).reshape(-1, 3)
         avg_sc_coords[atom_1_aaidx, 1] = quat_apply(sc_glo_quat[atom_1_aaidx, 1], atom_1_loc) + frameone_ori_1[atom_1_aaidx]
@@ -776,6 +991,19 @@ class SidechainFrame(FrameClass):
             True
         ) + frameone_ori_1[trp_aaidx].unsqueeze(1).expand(-1, 5, -1)
 
+        if batch_shape is not None:
+            avg_sc_coords = roma.internal.unflatten_batch_dims(avg_sc_coords, batch_shape)
+            avg_sc_mask = roma.internal.unflatten_batch_dims(avg_sc_mask, batch_shape)
+        if return_global_pose:
+            #sc_glo_quat = sc_glo_quat[:, 1:]
+            sc_glo_trans = torch.stack((frameone_ori, frameone_ori_1, frameone_ori_2), dim=-2)
+            ala_gly_aaidx = np.isin(three_letter_seq_arr, ('GLY', 'ALA', ))
+            sc_glo_quat[ala_gly_aaidx, :] = n_ca_c_frameone_.frame_q[ala_gly_aaidx].unsqueeze(-2)
+            sc_glo_trans[ala_gly_aaidx, :] = n_ca_c_frameone_.ori[ala_gly_aaidx].unsqueeze(-2)
+            if batch_shape is not None:
+                sc_glo_quat = roma.internal.unflatten_batch_dims(sc_glo_quat, batch_shape)
+                sc_glo_trans = roma.internal.unflatten_batch_dims(sc_glo_trans, batch_shape)
+            return avg_sc_coords, avg_sc_mask, sc_glo_quat, sc_glo_trans
         return avg_sc_coords, avg_sc_mask
 
 
