@@ -16,7 +16,7 @@
 # @Filename: frame.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2026-02-22 11:27:58 am
+# @Last Modified: 2026-02-22 05:02:09 pm
 from typing import Union, List, Optional
 import math
 import torch
@@ -404,7 +404,7 @@ class PeptideUnitFrame(FrameClass):
         ).to_W_avg_backbone_addter(**kwargs)
     
     @classmethod
-    def to_W_batch_avg_ori(cls, frame_rot: torch.Tensor, loc_ca_ia1_wrt_n_ia1: torch.Tensor, dim: int = 0, rot_repr_is_q: bool = True, clamp_loc_ca_ia1_wrt_n_ia1_sigma: Optional[float] = None):
+    def to_W_batch_avg_ori(cls, frame_rot: torch.Tensor, loc_ca_ia1_wrt_n_ia1: torch.Tensor, dim: int = 0, rot_repr_is_q: bool = True, clamp_loc_ca_ia1_wrt_n_ia1_sigma: Optional[float] = None, loc_ca_i: Optional[torch.Tensor] = None, loc_n_ia1: Optional[torch.Tensor] = None):
         '''
         NOTE: default input shape: L(xB)x... can be adjusted by `dim`
         TODO: update_mask: Optional[torch.Tensor] = None, fix_ori: Optional[torch.Tensor] = None
@@ -415,30 +415,45 @@ class PeptideUnitFrame(FrameClass):
         to_expand_shape = to_expand_shape[:(-1 if rot_repr_is_q else -2)]
         
         avg_loc_n_ia1 = torch.tensor(DEF_LOC['n_ia1'], **tensor_kwargs).expand(*to_expand_shape, -1)
-        avg_loc_n_ia1_ = torch.narrow(avg_loc_n_ia1, dim=dim, start=0, length=avg_loc_n_ia1.shape[dim]-1)
+        if loc_n_ia1 is not None:
+            tmp = avg_loc_n_ia1.index_select(dim=dim, index=torch.tensor(0, device=frame_rot.device))
+            avg_loc_n_ia1 = torch.cat((loc_n_ia1, tmp), dim=dim)
+            avg_loc_n_ia1_ = loc_n_ia1.clone()
+            avg_loc_n_ia1_.index_copy_(dim=dim, index=torch.tensor(0, device=frame_rot.device), source=tmp)
+        else:
+            avg_loc_n_ia1_ = torch.narrow(avg_loc_n_ia1, dim=dim, start=0, length=avg_loc_n_ia1.shape[dim]-1)
         if (clamp_loc_ca_ia1_wrt_n_ia1_sigma is not None) and (clamp_loc_ca_ia1_wrt_n_ia1_sigma >= 0):
             sigma = clamp_loc_ca_ia1_wrt_n_ia1_sigma
             loc_ca_ia1_wrt_n_ia1 = clamp_tensor_norm(loc_ca_ia1_wrt_n_ia1, dim=-1, vmin=1.460641 - sigma * 0.012020383, vmax=1.460641 + sigma * 0.012020383) # μ ± σ (μ=1.460641, σ=0.012020383)
         loc_ca_ia1 = loc_ca_ia1_wrt_n_ia1 + avg_loc_n_ia1_
         
-        loc_ca_i = torch.tensor(DEF_LOC['ca_i_is_trans'], **tensor_kwargs).expand(*to_expand_shape, -1)
-        loc_ca_i_ = torch.narrow(loc_ca_i, dim=dim, start=1, length=loc_ca_i.shape[dim]-1) # TODO: check when consider aatype
+        avg_loc_ca_i = torch.tensor(DEF_LOC['ca_i_is_trans'], **tensor_kwargs).expand(*to_expand_shape, -1)
+        if loc_ca_i is not None:
+            tmp = avg_loc_ca_i.index_select(dim=dim, index=torch.tensor(0, device=frame_rot.device))
+            avg_loc_ca_i = torch.cat((tmp, loc_ca_i), dim=dim)
+        avg_loc_ca_i_ = torch.narrow(avg_loc_ca_i, dim=dim, start=1, length=avg_loc_ca_i.shape[dim]-1) # TODO: check when consider aatype
         
-        reconstruct_ori = cls.get_reconstruct_ori_base(frame_rot, loc_ca_i_, loc_ca_ia1, dim, rot_repr_is_q)
-        return reconstruct_ori, avg_loc_n_ia1, loc_ca_i
+        reconstruct_ori = cls.get_reconstruct_ori_base(frame_rot, avg_loc_ca_i_, loc_ca_ia1, dim, rot_repr_is_q)
+        return reconstruct_ori, avg_loc_n_ia1, avg_loc_ca_i
 
     @classmethod
-    def to_W_batch_avg_backbone_addter(cls, frame_rot: torch.Tensor, loc_ca_ia1_wrt_n_ia1: torch.Tensor, init_global_trans: Optional[torch.Tensor] = None, stack_dim: int = 1, rot_repr_is_q: bool = True, clamp_loc_ca_ia1_wrt_n_ia1_sigma: Optional[float] = None):
+    def to_W_batch_avg_backbone_addter(cls, frame_rot: torch.Tensor, loc_ca_ia1_wrt_n_ia1: torch.Tensor, init_global_trans: Optional[torch.Tensor] = None, stack_dim: int = 1, rot_repr_is_q: bool = True, clamp_loc_ca_ia1_wrt_n_ia1_sigma: Optional[float] = None, loc_ca_i: Optional[torch.Tensor] = None, loc_n_ia1: Optional[torch.Tensor] = None, loc_o_i: Optional[torch.Tensor] = None):
         '''
         NOTE: input shape: L(xB)x...
         '''
         tensor_kwargs = dict(dtype=frame_rot.dtype, device=frame_rot.device)
         avg_loc_o_i = torch.tensor(DEF_LOC['o_i'], **tensor_kwargs).repeat(*frame_rot.shape[:(-1 if rot_repr_is_q else -2)], 1)
+        if loc_o_i is not None: avg_loc_o_i[1:] = loc_o_i
         cter_o_loc = torch.zeros(3, **tensor_kwargs); cter_o_loc[0] = avg_loc_o_i[0, 0].norm(); avg_loc_o_i[-1, :] = cter_o_loc
-        reconstruct_ori, avg_loc_n_ia1, loc_ca_i = cls.to_W_batch_avg_ori(frame_rot, loc_ca_ia1_wrt_n_ia1, rot_repr_is_q=rot_repr_is_q, clamp_loc_ca_ia1_wrt_n_ia1_sigma=clamp_loc_ca_ia1_wrt_n_ia1_sigma)
+        reconstruct_ori, avg_loc_n_ia1, loc_ca_i = cls.to_W_batch_avg_ori(frame_rot, loc_ca_ia1_wrt_n_ia1, rot_repr_is_q=rot_repr_is_q, clamp_loc_ca_ia1_wrt_n_ia1_sigma=clamp_loc_ca_ia1_wrt_n_ia1_sigma, loc_ca_i=loc_ca_i, loc_n_ia1=loc_n_ia1)
         if init_global_trans is not None: reconstruct_ori = reconstruct_ori + init_global_trans
+        # to_W_pos = (lambda some_loc_coords: quat_apply(frame_rot.unsqueeze(0).expand(3, *frame_rot.shape), some_loc_coords) + reconstruct_ori.unsqueeze(0)) if rot_repr_is_q else (lambda some_loc_coords: torch.einsum('...ij,...j->...i', frame_rot.unsqueeze(0), some_loc_coords) + reconstruct_ori.unsqueeze(0))
         to_W_pos = (lambda some_loc_coords: quat_apply(frame_rot, some_loc_coords) + reconstruct_ori) if rot_repr_is_q else (lambda some_loc_coords: torch.einsum('...ij,...j->...i', frame_rot, some_loc_coords) + reconstruct_ori)
         #to_W_pos = lambda some_loc_coords: (frame_q @ some_loc_coords) + reconstruct_ori
+        
+        # avg_w_n_ia1, avg_w_ca_i, avg_w_o_i = to_W_pos(torch.stack((avg_loc_n_ia1, loc_ca_i, avg_loc_o_i), dim=0))
+        # avg_w_n_ia1, avg_w_ca_i, avg_w_o_i = avg_w_n_ia1[:-1], avg_w_ca_i[1:], avg_w_o_i[1:]
+
         return torch.stack([
             to_W_pos(avg_loc_n_ia1)[:-1],  #rebuilt_backbone[0] N
             to_W_pos(loc_ca_i)[1:],        #rebuilt_backbone[1] Cα
@@ -469,21 +484,53 @@ class PeptideUnitFrame(FrameClass):
                            #L(xB)x4x3, dim=2
     
     @classmethod
-    def to_W_batch_avg_backbone_addter_via_rot_trans(cls, frame_rot: torch.Tensor, frame_trans: torch.Tensor, rot_repr_is_q: bool = False):
+    def to_W_batch_avg_backbone_addter_via_rotmat(cls, frame_rotmat: torch.Tensor, loc_ca_ia1_wrt_n_ia1: torch.Tensor, init_global_trans: Optional[torch.Tensor] = None, stack_dim: int = 1):
+        '''
+        NOTE: input shape: L(xB)x...
+        TODO: be replaced by to_W_batch_avg_backbone_addter(rot_repr_is_q=False)
+        '''
+        tensor_kwargs = dict(dtype=frame_rotmat.dtype, device=frame_rotmat.device)
+        avg_loc_o_i = torch.tensor(DEF_LOC['o_i'], **tensor_kwargs).expand(*frame_rotmat.shape[:-2], -1)
+        reconstruct_ori, avg_loc_n_ia1, loc_ca_i = cls.to_W_batch_avg_ori(frame_rotmat, loc_ca_ia1_wrt_n_ia1, rot_repr_is_q=False)
+        if init_global_trans is not None: reconstruct_ori = reconstruct_ori + init_global_trans
+        to_W_pos = lambda some_loc_coords: torch.einsum('...ij,...j->...i', frame_rotmat, some_loc_coords) + reconstruct_ori
+        return torch.stack([
+            to_W_pos(avg_loc_n_ia1)[:-1],  #rebuilt_backbone[0] N
+            to_W_pos(loc_ca_i)[1:],        #rebuilt_backbone[1] Cα
+            reconstruct_ori[1:],           #rebuilt_backbone[2] C
+            to_W_pos(avg_loc_o_i)[1:],     #rebuilt_backbone[3] O
+        ], dim=stack_dim)  #4xL(xB)x3, dim=0
+                           #Lx4(xB)x3, dim=1
+                           #L(xB)x4x3, dim=2
+    
+    @classmethod
+    def to_W_batch_avg_backbone_addter_via_rot_trans(cls, frame_rot: torch.Tensor, frame_trans: torch.Tensor, rot_repr_is_q: bool = False, loc_ca_i: Optional[torch.Tensor] = None, loc_n_ia1: Optional[torch.Tensor] = None, loc_o_i: Optional[torch.Tensor] = None):
         '''
         convert global pose to full atom backbone coordinates
 
         NOTE: input shape: BxLx...
         '''
-        loc_ca_i = torch.tensor(DEF_LOC['ca_i_is_trans'], dtype=frame_rot.dtype, device=frame_rot.device)
         frame_rot = frame_rot.transpose(0, 1)
         reconstruct_ori = frame_trans.transpose(0, 1)
+        avg_loc_ca_i = torch.tensor(DEF_LOC['ca_i_is_trans'], dtype=frame_rot.dtype, device=frame_rot.device).expand(*frame_rot.shape[:(-1 if rot_repr_is_q else -2)], -1)
+        if loc_ca_i is not None:
+            avg_loc_ca_i = torch.cat((avg_loc_ca_i[[0]], loc_ca_i), dim=0)
+        # to_W_pos = (lambda some_loc_coords: quat_apply(frame_rot.unsqueeze(0).expand(3, *frame_rot.shape), some_loc_coords) + reconstruct_ori.unsqueeze(0)) if rot_repr_is_q else (lambda some_loc_coords: torch.einsum('...ij,...j->...i', frame_rot.unsqueeze(0), some_loc_coords) + reconstruct_ori.unsqueeze(0))
         to_W_pos = (lambda some_loc_coords: quat_apply(frame_rot, some_loc_coords) + reconstruct_ori) if rot_repr_is_q else (lambda some_loc_coords: torch.einsum('...ij,...j->...i', frame_rot, some_loc_coords) + reconstruct_ori)
         tensor_kwargs = dict(dtype=frame_rot.dtype, device=frame_rot.device)
-        avg_loc_n_ia1 = torch.tensor(DEF_LOC['n_ia1'], **tensor_kwargs).expand(*frame_rot.shape[:(-1 if rot_repr_is_q else -2)], -1)
+        avg_loc_n_ia1 = torch.tensor(DEF_LOC['n_ia1'], **tensor_kwargs).expand(*frame_rot.shape[:(-1 if rot_repr_is_q else -2)], -1)    
+        if loc_n_ia1 is not None:
+            avg_loc_n_ia1 = avg_loc_n_ia1.clone()
+            avg_loc_n_ia1[:-1] = loc_n_ia1
         avg_loc_o_i = torch.tensor(DEF_LOC['o_i'], **tensor_kwargs).repeat(*frame_rot.shape[:(-1 if rot_repr_is_q else -2)], 1)
-        cter_o_loc = torch.zeros(3, **tensor_kwargs); cter_o_loc[0] = avg_loc_o_i[0, 0].norm(); avg_loc_o_i[-1, :] = cter_o_loc
-        avg_loc_ca_i = loc_ca_i.expand(*frame_rot.shape[:(-1 if rot_repr_is_q else -2)], -1)
+        if loc_o_i is not None:
+            avg_loc_o_i[1:] = loc_o_i
+        else:
+            cter_o_loc = torch.zeros(3, **tensor_kwargs); cter_o_loc[0] = avg_loc_o_i[0, 0].norm(); avg_loc_o_i[-1, :] = cter_o_loc
+        
+        # avg_w_n_ia1, avg_w_ca_i, avg_w_o_i = to_W_pos(torch.stack((avg_loc_n_ia1, avg_loc_ca_i, avg_loc_o_i), dim=0))
+        # avg_w_n_ia1, avg_w_ca_i, avg_w_o_i = avg_w_n_ia1[:-1], avg_w_ca_i[1:], avg_w_o_i[1:]
+
         return torch.stack([
                 to_W_pos(avg_loc_n_ia1)[:-1],  #rebuilt_backbone[0] N
                 to_W_pos(avg_loc_ca_i)[1:],    #rebuilt_backbone[1] Cα
@@ -566,7 +613,7 @@ class PeptideUnitFrame(FrameClass):
             pep_mask = bb_masks[0, 1:] & bb_masks[1, :-1] & bb_masks[2, :-1]
             pep_mask = torch.cat([n_ter_mask[None], pep_mask, c_ter_mask[None]])
             assert (pep_mask[:-1] & pep_mask[1:]).any()
-            loc_ca_ia1_wrt_n_ia1_mask = torch.cat([torch.tensor([True]), bb_masks[1, 1:] & bb_masks[0, 1:] & pep_mask[1:-1]])
+            loc_ca_ia1_wrt_n_ia1_mask = torch.cat([torch.tensor([True], device=bb_masks.device), bb_masks[1, 1:] & bb_masks[0, 1:] & pep_mask[1:-1]])
         else:
             pep_mask = torch.ones((bb_coords.shape[0]+1, ), dtype=torch.bool, device=bb_coords.device)
             loc_ca_ia1_wrt_n_ia1_mask = torch.ones((bb_coords.shape[0], ), dtype=torch.bool, device=bb_coords.device)

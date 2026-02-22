@@ -16,7 +16,7 @@
 # @Filename: __init__.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-12-16 02:45:21 pm
+# @Last Modified: 2026-02-22 12:06:00 pm
 import torch
 import numpy as np
 import roma
@@ -57,6 +57,7 @@ def to_backbone(rots: torch.Tensor,
                 init_global_trans: Optional[torch.Tensor] = None,
                 rot_repr_is_q: bool = False,
                 clamp_loc_ca_ia1_wrt_n_ia1_sigma: Optional[float] = None,
+                **kwargs,
                 ):
     '''
     input shape: B x L x ...
@@ -70,12 +71,12 @@ def to_backbone(rots: torch.Tensor,
     
     if mode == to_bb_mode.Pep_GlobalRots_GlobalTrans:
         global_rots, global_trans = rots, trans_or_loc_ca_ia1_wrt_n_ia1
-        bb_coords = PeptideUnitFrame.to_W_batch_avg_backbone_addter_via_rot_trans(global_rots, global_trans, rot_repr_is_q=rot_repr_is_q)
+        bb_coords = PeptideUnitFrame.to_W_batch_avg_backbone_addter_via_rot_trans(global_rots, global_trans, rot_repr_is_q=rot_repr_is_q, **kwargs)
     
     elif mode == to_bb_mode.Pep_GlobalRots_IsoRots:
         global_rots = rots
         loc_ca_ia1_wrt_n_ia1 = trans_or_loc_ca_ia1_wrt_n_ia1
-        bb_coords = PeptideUnitFrame.to_W_batch_avg_backbone_addter(global_rots.transpose(0, 1), loc_ca_ia1_wrt_n_ia1.transpose(0, 1), init_global_trans=init_global_trans, rot_repr_is_q=rot_repr_is_q, clamp_loc_ca_ia1_wrt_n_ia1_sigma=clamp_loc_ca_ia1_wrt_n_ia1_sigma).permute(2, 0, 1, 3)
+        bb_coords = PeptideUnitFrame.to_W_batch_avg_backbone_addter(global_rots.transpose(0, 1), loc_ca_ia1_wrt_n_ia1.transpose(0, 1), init_global_trans=init_global_trans, rot_repr_is_q=rot_repr_is_q, clamp_loc_ca_ia1_wrt_n_ia1_sigma=clamp_loc_ca_ia1_wrt_n_ia1_sigma, **kwargs).permute(2, 0, 1, 3)
     
     elif mode == to_bb_mode.Pep_RelativeRots_IsoRots:
         if rot_repr_is_q:
@@ -91,7 +92,7 @@ def to_backbone(rots: torch.Tensor,
             if init_global_rots is not None:
                 global_rots = init_global_rots @ global_rots
         loc_ca_ia1_wrt_n_ia1 = trans_or_loc_ca_ia1_wrt_n_ia1
-        bb_coords = PeptideUnitFrame.to_W_batch_avg_backbone_addter(global_rots.transpose(0, 1), loc_ca_ia1_wrt_n_ia1.transpose(0, 1), init_global_trans=init_global_trans, rot_repr_is_q=rot_repr_is_q, clamp_loc_ca_ia1_wrt_n_ia1_sigma=clamp_loc_ca_ia1_wrt_n_ia1_sigma).permute(2, 0, 1, 3)
+        bb_coords = PeptideUnitFrame.to_W_batch_avg_backbone_addter(global_rots.transpose(0, 1), loc_ca_ia1_wrt_n_ia1.transpose(0, 1), init_global_trans=init_global_trans, rot_repr_is_q=rot_repr_is_q, clamp_loc_ca_ia1_wrt_n_ia1_sigma=clamp_loc_ca_ia1_wrt_n_ia1_sigma, **kwargs).permute(2, 0, 1, 3)
     
     elif mode == to_bb_mode.Res_GlobalRots_GlobalTrans:
         raise NotImplementedError('TODO.')
