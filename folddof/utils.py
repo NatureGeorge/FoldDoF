@@ -16,7 +16,7 @@
 # @Filename: frame.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-12-16 02:05:27 pm
+# @Last Modified: 2026-02-24 11:52:12 am
 import torch
 import roma
 import math
@@ -216,13 +216,22 @@ def quat_cumprod(input: torch.Tensor, dim: int, normalize: bool = True):
     return v
 
 
-def mat_cumops(input: torch.Tensor, dim: int, ops = lambda a, b : b @ a):
+def mat_cumops_(input: torch.Tensor, dim: int, ops = lambda a, b : b @ a):
     '''modified from https://github.com/pypose/pypose/blob/main/pypose/lietensor/basics.py'''
     L, v = input.shape[dim], input.clone()
     assert dim not in (-1, v.shape[-1]), "Invalid dim"
     for i in torch.pow(2, torch.arange(math.log2(L)+1, device=v.device, dtype=torch.int64)):
         index = torch.arange(i, L, device=v.device, dtype=torch.int64)
         v.index_copy_(dim, index, ops(v.index_select(dim, index), v.index_select(dim, index-i)))
+    return v
+
+
+def mat_cumops(input: torch.Tensor, dim: int, ops = torch.matmul):
+    L, v = input.shape[dim], input
+    stride = 1
+    while stride < L:
+        v = torch.cat((v.narrow(dim, 0, stride), ops(v.narrow(dim, 0, L - stride), v.narrow(dim, stride, L - stride))), dim=dim)
+        stride *= 2
     return v
 
 

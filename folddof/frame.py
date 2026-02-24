@@ -16,7 +16,7 @@
 # @Filename: frame.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2026-02-23 02:34:00 pm
+# @Last Modified: 2026-02-24 11:43:31 am
 from typing import Union, List, Optional
 import math
 import torch
@@ -421,9 +421,10 @@ class PeptideUnitFrame(FrameClass):
         avg_loc_n_ia1 = torch.tensor(DEF_LOC['n_ia1'], **tensor_kwargs).expand(*to_expand_shape, -1)
         if loc_n_ia1 is not None:
             tmp = avg_loc_n_ia1.index_select(dim=dim, index=torch.tensor(0, device=frame_rot.device))
-            avg_loc_n_ia1 = torch.cat((loc_n_ia1, tmp), dim=dim)
-            avg_loc_n_ia1_ = loc_n_ia1.clone()
-            avg_loc_n_ia1_.index_copy_(dim=dim, index=torch.tensor(0, device=frame_rot.device), source=tmp)
+            avg_loc_n_ia1 = torch.cat((tmp, loc_n_ia1, tmp), dim=dim)
+            size = avg_loc_n_ia1.shape[dim]
+            avg_loc_n_ia1_ = avg_loc_n_ia1.index_select(dim=dim, index=torch.arange(0, size, device=avg_loc_n_ia1.device))
+            avg_loc_n_ia1 = avg_loc_n_ia1.index_select(dim=dim, index=torch.arange(1, size+1, device=avg_loc_n_ia1.device))
         else:
             avg_loc_n_ia1_ = torch.narrow(avg_loc_n_ia1, dim=dim, start=0, length=avg_loc_n_ia1.shape[dim]-1)
         if (clamp_loc_ca_ia1_wrt_n_ia1_sigma is not None) and (clamp_loc_ca_ia1_wrt_n_ia1_sigma >= 0):
@@ -1191,7 +1192,8 @@ class RNAResidueUnitFrame(FrameClass):
         initial_shape = list(frame_rot_I.shape[:(-1 if rot_repr_is_q else -2)]); initial_shape[dim] = 1
         avg_o3b_im1 = to_W_pos(torch.index_select(frame_rot_I, dim, initial_index), torch.index_select(frame_trans_I, dim, initial_index), loc_o3b_im1_I.expand(*initial_shape, -1))
         avg_op2.index_copy_(dim=dim, index=initial_index, source=avg_o3b_im1)
-        
+        # TODO: remove index_copy_
+
         avg_bb = [
                 frame_trans_I,                                           # P   
                 to_W_pos(frame_rot_I, frame_trans_I, loc_o5b_i_I),       # O5'

@@ -16,7 +16,7 @@
 # @Filename: __init__.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2026-02-22 12:06:00 pm
+# @Last Modified: 2026-02-24 11:59:25 am
 import torch
 import numpy as np
 import roma
@@ -83,7 +83,7 @@ def to_backbone(rots: torch.Tensor,
             if init_global_rots is None:
                 init_global_rots = torch.tensor([[0., 0., 0., 1.]], dtype=rots.dtype, device=rots.device).expand(rots.shape[0], 1, 4)
             rrots = torch.cat((init_global_rots, rots), dim=1)
-            global_rots = quat_cumprod(rrots, 1)
+            global_rots = mat_cumops(rrots, 1, lambda a, b: torch.nn.functional.normalize(roma.quat_product(a, b), dim=-1))
         else:
             global_rots = mat_cumops(rots, 1)
             global_rots = torch.cat((
