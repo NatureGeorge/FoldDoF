@@ -16,7 +16,7 @@
 # @Filename: frame.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2026-02-24 11:43:31 am
+# @Last Modified: 2026-02-26 11:24:29 am
 from typing import Union, List, Optional
 import math
 import torch
@@ -421,10 +421,8 @@ class PeptideUnitFrame(FrameClass):
         avg_loc_n_ia1 = torch.tensor(DEF_LOC['n_ia1'], **tensor_kwargs).expand(*to_expand_shape, -1)
         if loc_n_ia1 is not None:
             tmp = avg_loc_n_ia1.index_select(dim=dim, index=torch.tensor(0, device=frame_rot.device))
-            avg_loc_n_ia1 = torch.cat((tmp, loc_n_ia1, tmp), dim=dim)
-            size = avg_loc_n_ia1.shape[dim]
-            avg_loc_n_ia1_ = avg_loc_n_ia1.index_select(dim=dim, index=torch.arange(0, size, device=avg_loc_n_ia1.device))
-            avg_loc_n_ia1 = avg_loc_n_ia1.index_select(dim=dim, index=torch.arange(1, size+1, device=avg_loc_n_ia1.device))
+            avg_loc_n_ia1 = torch.cat((loc_n_ia1, tmp), dim=dim)
+            avg_loc_n_ia1_ = torch.cat((tmp, torch.narrow(loc_n_ia1, dim=dim, start=1, length=loc_n_ia1.shape[dim]-1)), dim=dim)
         else:
             avg_loc_n_ia1_ = torch.narrow(avg_loc_n_ia1, dim=dim, start=0, length=avg_loc_n_ia1.shape[dim]-1)
         if (clamp_loc_ca_ia1_wrt_n_ia1_sigma is not None) and (clamp_loc_ca_ia1_wrt_n_ia1_sigma >= 0):
